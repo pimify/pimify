@@ -41,31 +41,34 @@ Resolved: Django 6.1.1, Unfold 0.107.0, Ninja 1.7.1, money 3.6.1, import-export 
 
 Goal: remove WMS/Procurement/pricing-engine from `api/`, deprecate safely.
 
-### 1.1 Deprecate (don't delete yet)
-- [ ] Add `Deprecation: true + Sunset` header to: `private/suppliers*, private/warehouses*, private/stocks*, private/product-supplier*, public/exchange-rate*, public/convert-product-price*`
-- [ ] Replace dashboard KPIs (`Total Stock Value`, `Low Stock Alert` in `api/views.py:dashboard_callback`) with stubs: `Total Products, % Complete, Missing media`
-- [ ] Hide `SIDEBAR: Stock Management` in `core/settings/base.py:UNFOLD` (comment out, don't delete)
+### 1.1 Deprecate (don't delete yet) — DONE 2026-10-02, uncommitted
+- [x] `api/middleware.py:DeprecationMiddleware` adds `Deprecation: true + Sunset: Thu, 01 Apr 2027` to: `private/suppliers*, private/warehouses*, private/stocks*, private/product-supplier*, public/exchange-rate*, public/convert-product-price*`. Verified live: deprecated paths carry headers on 200/401/404; healthy paths (`/health`, `/products/`) carry none
+- [x] Dashboard KPIs (`api/views.dashboard_callback`): `Total Stock Value` + `Low Stock Alert` replaced with `Total Products / Catalog Completeness (Phase 2 stub) / Missing Media`. Verified by direct call
+- [x] `SIDEBAR: Stock Management` in `core/settings/base.py:UNFOLD` commented out (models/admin untouched). Dashboard still 302s correctly
 
-### 1.2 Extract apps (copy, not move — shared db_table for 1 release)
-- [ ] `python manage.py startapp catalog` (pure PIM), `startapp inventory`, `startapp procurement`
-- [ ] Copy `Warehouse, Stock` -> `inventory/` with `db_table='Warehouses','Stocks'`
-- [ ] Copy `Supplier, ProductSupplier` -> `procurement/` with `db_table='Suppliers','Product Suppliers'`
-- [ ] Old `api/models.py` stays canonical for this release
+### 1.2 Extract apps (copy, not move — shared db_table for 1 release) — DONE 2026-10-02, uncommitted
+- [x] `catalog` (empty placeholder — models land in Phase 2), `inventory`, `procurement` created, all in `LOCAL_APPS`
+- [x] `inventory/`: unmanaged `Warehouse` + `Stock` mirrors (`managed=False`, same `db_table`); FKs use `DO_NOTHING + related_name='+'`. `procurement/`: unmanaged `Supplier` + `ProductSupplier` mirrors, same pattern
+- [x] CORRECTION to plan: unmanaged mirrors DO generate `0001_initial.py` (state tracking) — but Django strips relation fields and emits zero DDL for them by design (proven in 6.1 source + fresh-DB test: api.0001 creates tables, mirror 0001s apply as no-ops). `makemigrations --check` stays clean
+- [x] Old `api/models.py` stays canonical: `Stock.save()` override removed, replaced by `inventory/signals.py:update_product_stock_cache` (post_save, byte-identical behavior incl. updated_at bump). Parity proven by 3 new `inventory/tests.py` tests (create / multi-row sum / update-recompute) — first tests in repo, all pass
+- [x] Old `requirements.txt`-era note: mirrors deliberately NOT registered in admin (would duplicate api admin)
+- [x] FIX (audit 2026-10-02): mirrors enforced read-only — instance save/delete, manager create/get_or_create/update_or_create/bulk_create, and queryset update/delete all raise NotImplementedError naming the canonical api model (signal binds api.Stock only; silent divergence proven before fix). Covered by MirrorReadOnlyTest in both apps (16 tests total, all pass)
+- [x] FIX (audit 2026-10-02): post_delete receiver recomputes stock_quantity (old override never handled deletes → stale totals proven: 5 stayed 5); cascade product-delete guarded via product_id lookup + None check (proven: no crash, rows gone). Delete-to-zero covered by tests
 
 ### 1.3 Decouple writes
 - [ ] Move `Stock.save()` aggregate to `inventory/signals.py:update_product_stock_cache` -> transitional `Product.stock_quantity_cached`
 - [ ] Change `Product.stock_quantity` to read-only `@property` in serializers/admin (stop direct writes)
 - [ ] Freeze price: add `catalog.Product.list_price = MoneyField` (copy from `price`), dual-write in `save()`, `RunPython` backfill `price,price_currency -> list_price,list_price_currency`
 - [ ] Remove `convert_money` usage; keep raw amount. Remove `djmoney.contrib.exchange` from `INSTALLED_APPS` only after routers removed
-- [ ] Fix `public_routers.py:list_products` bug: `search` currently discards `is_active/min_price` and forces `is_active=True`; fix `price__gte` on MoneyField -> `price_amount__gte`
+- [x] Fix `public_routers.py:list_products`: `search` no longer discards `is_active`/price filters and no longer forces `is_active=True`; `0` price bounds now respected (`is not None`). CORRECTION to plan: `price__gte=<float>` was already correct — amount column IS `price`, no `price_amount` column exists; verified empirically on djmoney 3.6.1 (only the search-reset + falsy-zero parts were real bugs). Live-verified `?search=smoke` returns 200 with correct row
 
 ### 1.4 Cutover + Drop
 - [ ] Point Ninja public routers to `catalog` querysets; private WMS routers to `inventory/procurement`
 - [ ] One green release with both paths live + verified `dbbackup`
 - [ ] Delete from `api/models.py`: `stock_quantity` column, `Warehouse/Stock/Supplier/ProductSupplier`, exchange routers/job (`scheduler.sync_exchange_rates`)
 - [ ] Delete exchange scheduler job, keep `backup_db/media + delete_old_job_executions`
-- [ ] Fix `scheduler.py` missing `from django.core.management import call_command`
-- [ ] Fix `base.py:DATABASES OPTIONS` duplicate `init_command` key (second overwrites first — merge into one `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`)
+- [x] Fix `scheduler.py` missing `from django.core.management import call_command` — DONE in Phase 0
+- [x] Fix `base.py:DATABASES OPTIONS` duplicate `init_command` key — DONE in Phase 0 (merged; WAL was silently dropped)
 
 ---
 

@@ -1,11 +1,11 @@
 import json
-from django.db.models import Sum, Count, F
+from django.db.models import Count
 from datetime import timedelta
 from django.utils import timezone
 
 
 def dashboard_callback(request, context):
-    from .models import Product, Stock
+    from .models import Product, ProductImage
 
     # Navigation
     context['navigation'] = [
@@ -19,10 +19,11 @@ def dashboard_callback(request, context):
     last_month_start = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
     this_month_start = today.replace(day=1)
 
-    # KPI metrics
+    # KPI metrics — Phase 1 (pure-PIM pivot): WMS KPIs (stock value, low
+    # stock) replaced with catalog stubs. Completeness % lands in Phase 2.
     total_products = Product.objects.count()
     active_products = Product.objects.filter(is_active=True).count()
-    low_stock = Product.objects.filter(stock_quantity__lt=10).count()
+    missing_media = Product.objects.filter(images__isnull=True).count()
 
     context['kpi'] = [
         {
@@ -31,14 +32,14 @@ def dashboard_callback(request, context):
             'footer': f"{active_products} active products"
         },
         {
-            'title': 'Total Stock Value',
-            'metric': f"${Product.objects.aggregate(total=Sum(F('price') * F('stock_quantity')))['total'] or 0:,.2f}",
-            'footer': f"{Stock.objects.aggregate(total=Sum('quantity'))['total'] or 0} items in stock"
+            'title': 'Catalog Completeness',
+            'metric': '—',
+            'footer': 'Per-channel completeness lands in Phase 2'
         },
         {
-            'title': 'Low Stock Alert',
-            'metric': low_stock,
-            'footer': 'Products need attention'
+            'title': 'Missing Media',
+            'metric': missing_media,
+            'footer': 'Products without images'
         }
     ]
 

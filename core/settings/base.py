@@ -14,6 +14,9 @@ OPEN_EXCHANGE_RATES_APP_ID = config("OPEN_EXCHANGE_RATES_APP_ID", default="")
 # Define application categories
 LOCAL_APPS = [
     'api',
+    'catalog',      # Phase 2: pure-PIM domain (placeholder during Phase 1)
+    'inventory',    # Phase 1: WMS read mirror — unmanaged models sharing api tables
+    'procurement',  # Phase 1: procurement read mirror — unmanaged models sharing api tables
 ]
 
 # Third-party applications
@@ -65,6 +68,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "api.middleware.DeprecationMiddleware",  # Phase 1: Sunset headers on non-PIM endpoints
 ]
 
 # URL configuration
@@ -255,38 +259,40 @@ UNFOLD = {
                     },
                 ],
             },
-            # Stock management section
-            {
-                "title": _("Stock Management"),
-                "separator": False,
-                "collapsible": False,
-                "items": [
-                    {
-                        "title": _("Suppliers"),
-                        "icon": "local_shipping",
-                        "link": reverse_lazy("admin:api_supplier_changelist"),
-                        "permission": lambda request: request.user.is_staff,
-                    },
-                    {
-                        "title": _("Warehouses"),
-                        "icon": "warehouse",
-                        "link": reverse_lazy("admin:api_warehouse_changelist"),
-                        "permission": lambda request: request.user.is_staff,
-                    },
-                    {
-                        "title": _("Stocks"),
-                        "icon": "inventory",
-                        "link": reverse_lazy("admin:api_stock_changelist"),
-                        "permission": lambda request: request.user.is_staff,
-                    },
-                    {
-                        "title": _("Product Suppliers"),
-                        "icon": "compare_arrows",
-                        "link": reverse_lazy("admin:api_productsupplier_changelist"),
-                        "permission": lambda request: request.user.is_staff,
-                    },
-                ],
-            },
+            # Stock management section — Phase 1 (pure-PIM pivot): hidden, not
+            # part of the PIM surface. Uncommented only if the WMS plugin UI
+            # is needed. Models still live in api/ this release.
+            # {
+            #     "title": _("Stock Management"),
+            #     "separator": False,
+            #     "collapsible": False,
+            #     "items": [
+            #         {
+            #             "title": _("Suppliers"),
+            #             "icon": "local_shipping",
+            #             "link": reverse_lazy("admin:api_supplier_changelist"),
+            #             "permission": lambda request: request.user.is_staff,
+            #         },
+            #         {
+            #             "title": _("Warehouses"),
+            #             "icon": "warehouse",
+            #             "link": reverse_lazy("admin:api_warehouse_changelist"),
+            #             "permission": lambda request: request.user.is_staff,
+            #         },
+            #         {
+            #             "title": _("Stocks"),
+            #             "icon": "inventory",
+            #             "link": reverse_lazy("admin:api_stock_changelist"),
+            #             "permission": lambda request: request.user.is_staff,
+            #         },
+            #         {
+            #             "title": _("Product Suppliers"),
+            #             "icon": "compare_arrows",
+            #             "link": reverse_lazy("admin:api_productsupplier_changelist"),
+            #             "permission": lambda request: request.user.is_staff,
+            #         },
+            #     ],
+            # },
             # Settings section
             {
                 "title": _("Settings"),

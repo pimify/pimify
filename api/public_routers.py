@@ -83,28 +83,25 @@ def list_products(request, filter_data: ProductFilterSchema = Query(...)):
     Supports filtering by active status, price range, and search term.
     """
     # Base query with active status filter
-    products = (Product.objects.filter(is_active=filter_data.is_active) 
-               if filter_data.is_active is not None 
+    products = (Product.objects.filter(is_active=filter_data.is_active)
+               if filter_data.is_active is not None
                else Product.objects.all())
 
-    # Search filter
+    # Search filter — narrows the base queryset (previously discarded all
+    # other filters and forced is_active=True).
     if filter_data.search:
-        products = Product.objects.filter(
-            is_active=True,
-            name__icontains=filter_data.search
-        ) | Product.objects.filter(
-            is_active=True,
-            description__icontains=filter_data.search
+        products = products.filter(
+            Q(name__icontains=filter_data.search)
+            | Q(description__icontains=filter_data.search)
         )
 
-    # Price range filter
-    if filter_data.min_price or filter_data.max_price:
-        price_filter = []
-        if filter_data.min_price:
-            price_filter.append(Q(price__gte=filter_data.min_price))
-        if filter_data.max_price:
-            price_filter.append(Q(price__lte=filter_data.max_price))
-        products = products.filter(*price_filter)
+    # Price range filter — MoneyField amount column is `price`, so plain
+    # numeric comparison is correct (verified against djmoney 3.6.1).
+    if filter_data.min_price is not None or filter_data.max_price is not None:
+        if filter_data.min_price is not None:
+            products = products.filter(price__gte=filter_data.min_price)
+        if filter_data.max_price is not None:
+            products = products.filter(price__lte=filter_data.max_price)
 
     return products
 

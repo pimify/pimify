@@ -199,16 +199,10 @@ class Stock(models.Model):
             models.Index(fields=['id'])
         ]
 
-    def save(self, *args, **kwargs):
-        """
-        Override save method to update the total stock quantity in the Product model
-        whenever stock levels change.
-        """
-        super().save(*args, **kwargs)
-        total_quantity = Stock.objects.filter(product=self.product).aggregate(
-            total=models.Sum('quantity'))['total']
-        self.product.stock_quantity = total_quantity if total_quantity else 0
-        self.product.save()
+    # NOTE (Phase 1 pure-PIM pivot): the stock-aggregate write logic that
+    # used to live in Stock.save() moved to
+    # inventory.signals.update_product_stock_cache (post_save, identical
+    # behavior). api.Stock stays the canonical model this release.
 
     def __str__(self):
         return str(self.id)
