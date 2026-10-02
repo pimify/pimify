@@ -111,11 +111,13 @@ Goal: minimal correct PIM domain in `catalog/`.
 - DECISION (Gap 4): unpaginated lists stay unbounded for MVP (per-product collections are small); revisit with a cap if a product ever exceeds ~500 variants/media/relations
 - [ ] Defer `POST/PATCH /products/, /variants/, /values/` until reads stable
 
-### 2.3 Admin (Unfold)
-- [ ] `ProductAdmin`: drop `stock_quantity` col; add `VariantInline (sortable,paginated)`, `ValueInline (conditional widget by type)`, `MediaInline (file widget)`, `Category M2M + primary`; fieldset tabs `General|Attributes|Variants|Media|Relations|History`
-- [ ] New: `AttributeAdmin (OptionInline)`, `AttributeSetAdmin`, `Channel/LocaleAdmin`, `AssociationAdmin` — all `ImportExportModelAdmin`
-- [ ] Sidebar: delete `Stock Management`, add `Catalog (Products,Families,Attributes,Categories,Media)`, `Syndication (Channels,Locales,Completeness)`
-- [ ] Dashboard: `Total Products, % Complete (channel/locale), Missing media, Untranslated` + keep recent-actions
+### 2.3 Admin (Unfold) — DONE 2026-10-02, uncommitted
+- [x] `catalog/admin.py`: 13 ModelAdmins (all ImportExport; Product + Variant with SimpleHistoryAdmin mixin — history views render, MRO proven by test). Product change form: Category/Value/Variant/Media inlines with `tab=True`; variants + values `per_page=10`; variant `show_change_link`; ValueInline uses per-row-type form (widget/date-picker/textarea + option queryset scoped to the row's attribute; model clean() still the enforcer); media uses ImageUploaderWidget; deterministic inline ordering via get_queryset (fixes Unfold UnorderedObjectListWarning)
+- [x] Reference admins: Attribute (+Option inline) / Family / Channel+Locale / Category / Media / Association / CompletenessRule (+filter_horizontal M2Ms), Brand, Group — list/display/search/filters throughout
+- [x] Sidebar: dead Stock-Management comment deleted; new Catalog (Products, Families, Attributes, Categories, Media) + Syndication (Channels, Locales, Completeness) sections; legacy section relabeled "Legacy (deprecated)" so api.* links can't masquerade as catalog (audit fix; section stays reachable until 1.4 cutover)
+- [x] `api ProductAdmin`: `stock_quantity` dropped from list_display (display-only)
+- [x] Dashboard (`api/views.dashboard_callback` now catalog-driven): Total Products / Catalog Completeness (mean of cached channel scores; "—" until first endpoint score) / Missing Media (counts variant-only media too — audit fix; old `media__isnull` query silently misclassified swatch-only products) / Untranslated (zero localized values; "—" until locales + localizable attrs exist); category distribution from catalog; template grid `lg:w-1/3` → `lg:w-1/4` for 4 cards; recent-actions untouched; dead `json`/`timedelta` imports + unused date-range block removed
+- [x] `catalog/test_admin.py`: 5 smoke tests (14 changelists incl. dashboard + legacy api product, add/change forms with all inlines, both history views, sidebar legacy label, Missing Media variant-only regression) — 60/60 suite green. Notable: `force_login`/`client.login` both break dj-login-history's post_login signal (no HTTP_USER_AGENT) → tests use real form POST login. Dead `FieldTextFilter` import dropped from `catalog/admin.py`
 
 ---
 

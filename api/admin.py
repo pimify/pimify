@@ -97,7 +97,7 @@ class ProductAdmin(ModelAdmin, ImportExportModelAdmin):
     compressed_fields = True
     warn_unsaved_form = True
     list_filter_submit = True
-    list_display = ('sku', 'name', 'price', 'stock_quantity', 'is_active', 'created_at', 'updated_at')
+    list_display = ('sku', 'name', 'price', 'is_active', 'created_at', 'updated_at')
     list_filter = (
         ('name', ChoicesDropdownFilter),
         ('sku', FieldTextFilter),

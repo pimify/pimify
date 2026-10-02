@@ -234,9 +234,11 @@ UNFOLD = {
                     },
                 ],
             },
-            # Product management section
+            # Legacy product section — Phase 2.3 audit: same concepts as
+            # Catalog above but bound to the legacy api.* tables. Kept
+            # reachable until the 1.4 cutover; the label marks it deprecated.
             {
-                "title": _("Product Management"),
+                "title": _("Legacy (deprecated)"),
                 "separator": False,
                 "collapsible": False,
                 "items": [
@@ -260,40 +262,70 @@ UNFOLD = {
                     },
                 ],
             },
-            # Stock management section — Phase 1 (pure-PIM pivot): hidden, not
-            # part of the PIM surface. Uncommented only if the WMS plugin UI
-            # is needed. Models still live in api/ this release.
-            # {
-            #     "title": _("Stock Management"),
-            #     "separator": False,
-            #     "collapsible": False,
-            #     "items": [
-            #         {
-            #             "title": _("Suppliers"),
-            #             "icon": "local_shipping",
-            #             "link": reverse_lazy("admin:api_supplier_changelist"),
-            #             "permission": lambda request: request.user.is_staff,
-            #         },
-            #         {
-            #             "title": _("Warehouses"),
-            #             "icon": "warehouse",
-            #             "link": reverse_lazy("admin:api_warehouse_changelist"),
-            #             "permission": lambda request: request.user.is_staff,
-            #         },
-            #         {
-            #             "title": _("Stocks"),
-            #             "icon": "inventory",
-            #             "link": reverse_lazy("admin:api_stock_changelist"),
-            #             "permission": lambda request: request.user.is_staff,
-            #         },
-            #         {
-            #             "title": _("Product Suppliers"),
-            #             "icon": "compare_arrows",
-            #             "link": reverse_lazy("admin:api_productsupplier_changelist"),
-            #             "permission": lambda request: request.user.is_staff,
-            #         },
-            #     ],
-            # },
+            # Catalog section — Phase 2.3: pure-PIM surface
+            {
+                "title": _("Catalog"),
+                "separator": False,
+                "collapsible": False,
+                "items": [
+                    {
+                        "title": _("Products"),
+                        "icon": "box",
+                        "link": reverse_lazy("admin:catalog_product_changelist"),
+                        "permission": lambda request: request.user.is_staff,
+                    },
+                    {
+                        "title": _("Families"),
+                        "icon": "folder_managed",
+                        "link": reverse_lazy("admin:catalog_attributeset_changelist"),
+                        "permission": lambda request: request.user.is_staff,
+                    },
+                    {
+                        "title": _("Attributes"),
+                        "icon": "tune",
+                        "link": reverse_lazy("admin:catalog_attribute_changelist"),
+                        "permission": lambda request: request.user.is_staff,
+                    },
+                    {
+                        "title": _("Categories"),
+                        "icon": "category",
+                        "link": reverse_lazy("admin:catalog_category_changelist"),
+                        "permission": lambda request: request.user.is_staff,
+                    },
+                    {
+                        "title": _("Media"),
+                        "icon": "image",
+                        "link": reverse_lazy("admin:catalog_productmedia_changelist"),
+                        "permission": lambda request: request.user.is_staff,
+                    },
+                ],
+            },
+            # Syndication section — Phase 2.3: channels, locales, completeness
+            {
+                "title": _("Syndication"),
+                "separator": False,
+                "collapsible": False,
+                "items": [
+                    {
+                        "title": _("Channels"),
+                        "icon": "send",
+                        "link": reverse_lazy("admin:catalog_channel_changelist"),
+                        "permission": lambda request: request.user.is_staff,
+                    },
+                    {
+                        "title": _("Locales"),
+                        "icon": "translate",
+                        "link": reverse_lazy("admin:catalog_locale_changelist"),
+                        "permission": lambda request: request.user.is_staff,
+                    },
+                    {
+                        "title": _("Completeness"),
+                        "icon": "checklist",
+                        "link": reverse_lazy("admin:catalog_completenessrule_changelist"),
+                        "permission": lambda request: request.user.is_staff,
+                    },
+                ],
+            },
             # Settings section
             {
                 "title": _("Settings"),
