@@ -58,7 +58,7 @@ Goal: remove WMS/Procurement/pricing-engine from `api/`, deprecate safely.
 ### 1.3 Decouple writes
 - [ ] Move `Stock.save()` aggregate to `inventory/signals.py:update_product_stock_cache` -> transitional `Product.stock_quantity_cached`
 - [ ] Change `Product.stock_quantity` to read-only `@property` in serializers/admin (stop direct writes)
-- [ ] Freeze price: add `catalog.Product.list_price = MoneyField` (copy from `price`), dual-write in `save()`, `RunPython` backfill `price,price_currency -> list_price,list_price_currency`
+- [x] SUPERSEDED by 2.1 backfill: `catalog.Product.list_price` copied from `api.price` once (no dual-write needed); `api.price` stays untouched until the 1.4 drop. Original item: ~~Freeze price: add `catalog.Product.list_price = MoneyField` (copy from `price`), dual-write in `save()`, `RunPython` backfill~~
 - [ ] Remove `convert_money` usage; keep raw amount. Remove `djmoney.contrib.exchange` from `INSTALLED_APPS` only after routers removed
 - [x] Fix `public_routers.py:list_products`: `search` no longer discards `is_active`/price filters and no longer forces `is_active=True`; `0` price bounds now respected (`is not None`). CORRECTION to plan: `price__gte=<float>` was already correct — amount column IS `price`, no `price_amount` column exists; verified empirically on djmoney 3.6.1 (only the search-reset + falsy-zero parts were real bugs). Live-verified `?search=smoke` returns 200 with correct row
 
@@ -76,26 +76,30 @@ Goal: remove WMS/Procurement/pricing-engine from `api/`, deprecate safely.
 
 Goal: minimal correct PIM domain in `catalog/`.
 
-### 2.1 Models (`catalog/models.py` — SQLite now, PG-ready)
-- [ ] `Locale(code PK, name, is_active)` + `Channel(code PK, name, default_locale FK, locales M2M, default_currency)`
-- [ ] `Category(id NanoID, name, slug, parent FK-self null, kind: master|collection, sort)` + `ProductCategory(product FK, category FK, is_primary bool)`
-  - [ ] Migrate flat `Category(name,slug)` -> add nullable `parent/kind/sort`, backfill `kind=master`
-- [ ] `AttributeGroup(code PK, name, sort)` + `Attribute(code PK, label, type: text|textarea|number|boolean|date|url|select|multiselect|json, is_required, is_localizable, is_channel_scoped, is_variant_axis)` + `AttributeOption(id, attribute FK, code, label, sort)` + `AttributeSet/Family(code PK, name, groups M2M, attributes M2M)`
-- [ ] `Product(id NanoID PK, sku unique [model code], family FK null, is_active, list_price Money, timestamps)` — NO stock, NO cost
-- [ ] `ProductValue(product FK, attribute FK, channel null, locale null, value_text/value_decimal/value_bool/value_date + option FK + options M2M + value_json JSON)` + `UniqueConstraint(product,attribute,channel,locale)` + `clean()` per type/scope
-- [ ] `ProductVariant(id NanoID, product FK, sku unique, is_default, sort)` + `VariantValue(same shape, variant FK)` — only axis + variant-scoped attrs
-- [ ] `ProductMedia(id, product null, variant null, file, role: main|gallery|swatch|manual, sort, channel null, locale null, alt_text)` — preserve `media/product_images/` paths, keep `post_delete` cleanup
-  - [ ] Migrate `ProductImage(productFK)` -> `ProductMedia(role=gallery, sort=0)`
-- [ ] `ProductAssociation(from FK, to FK, type: upsell|cross-sell|bundle|accessory)`
-- [ ] `History`: add `django-simple-history` (Unfold-native) on `Product/Variant/Value`, not custom table
-- [ ] `CompletenessRule(channel FK, locale FK, family FK, required_attrs M2M)` — computed %, denormalized `completeness_cache`, not live aggregate
-- [ ] `Brand(name)` lightweight entity OR string on Product (do NOT keep full `Supplier` in catalog)
-- [ ] Invert `Organization.api_keys FK` -> `APIKey.organization FK` (data migrate: assign all keys to first org)
+### 2.1 Models (`catalog/models.py` — SQLite now, PG-ready) — DONE 2026-10-02, uncommitted
+- [x] `Locale(code PK, name, is_active)` + `Channel(code PK, name, default_locale FK null, locales M2M, default_currency USD)`
+- [x] `Category(id NanoID preserved, name, slug, parent FK-self null + cycle guard in clean(), kind master|collection default master, sort)` + `ProductCategory(product FK, category FK, is_primary, uniq(product,category))`
+- [x] `AttributeGroup(code PK, name, sort)` + `Attribute(code PK, label, type×9, group FK null [completion of spec: drives admin fieldsets], is_required/localizable/channel_scoped/variant_axis, sort)` + `AttributeOption(attr FK, code, label, sort, uniq(attr,code))` + `AttributeSet(code PK, name, groups M2M, attributes M2M)`
+- [x] `Product(id NanoID preserved, sku unique, name, description, family FK null SET_NULL, brand FK null SET_NULL, list_price Money, is_active, categories M2M via ProductCategory, completeness_cache JSON default dict, timestamps, history)`
+- [x] `ProductValue` / `VariantValue`: hybrid typed columns + `value_json`, `option FK + options M2M`, `UniqueConstraint(owner,attribute,channel,locale)`, strict `clean()`: type↔column mapping, exactly-one-representation, option/options attribute-match, locale/channel gating, axis placement (axis⇄variant only), NULL-safe duplicate guard. `is_required` intentionally NOT in clean (family/channel context → completeness engine). MULTISELECT non-empty enforced at form level (needs pk)
+- [x] `ProductVariant(id NanoID, product FK CASCADE, sku unique, is_default, sort)` + partial `UniqueConstraint(product where is_default)` — single default enforced at DB level, proven by test
+- [x] `ProductMedia(product/variant FK null CASCADE, file→same product_images/ dir, role, sort, channel/locale PROTECT, alt_text, owner-required clean, post_delete file cleanup)` + backfill `ProductImage -> role=gallery, sort=0, PKs preserved`
+- [x] `ProductAssociation(from/to FK, type×4, uniq(from,to,type), self-ref guard)`
+- [x] `History`: `django-simple-history==3.13.0` added via uv (`simple_history` in INSTALLED_APPS); `HistoricalRecords()` on Product/Variant/ProductValue/VariantValue → 4 history tables, verified on disk
+- [x] `CompletenessRule(channel/locale/family FK CASCADE, required_attributes M2M, uniq(channel,locale,family))`
+- [x] `Brand(id NanoID, name unique)` entity (no vendor terms)
+- [x] Backfill `catalog/backfill.py` (testable fns) + `0002_backfill_from_api` (deps catalog.0001 + api.0001, reversible best-effort): 3/3 products, 0/0 cats/images match; sku/amount/currency/PKs/timestamps preserved; idempotent (update_or_create/get_or_create); 14 catalog tests pass, 30/30 suite green (34/34 after audit fixes)
+- [x] FIX (audit 2026-10-02): single primary category per product — partial `UniqueConstraint(product where is_primary)` (`uniq_primary_category_per_product`); second primary now raises IntegrityError, proven by test
+- [x] FIX (audit 2026-10-02): single global main + single main per channel, separately for product- and variant-owned media (4 partial uniques; NULL scoping deliberate: variant rows invisible to product constraints and vice versa). Decision recorded: per-channel mains allowed, duplicates within a scope are not
+- [x] FIX (audit 2026-10-02): saved-but-empty MULTISELECT now fails `full_clean()` (creation-time still unchecked — M2M needs a pk; completeness engine must also treat empty as unset, see 2.2)
+- [x] Cleanup: audit probe rows removed from dev DB (AUD*/AUDIT-* products, c1/c2, reference rows + history orphans); SMOKE-001 fixture kept. Lesson re-proven: new uniqueness migrations fail on violating rows — resolve data BEFORE migrate, not after
+- [ ] Invert `Organization.api_keys FK` -> `APIKey.organization FK` — DEFERRED to cutover pass (auth-infra, not catalog; 1 key + 0 orgs, needs api migration + admin edit; group with router cutover)
 
 ### 2.2 API (Ninja, read-first, paginated 20, X-API-Key public / django_auth write)
 - [ ] Keep: `GET /public/health`, `/organization` (add missing `auth`), `/products/`, `/products/{id}/`, `/categories/`, `/categories/{id}/products/`
 - [ ] Evolve: `/products/{id}/images/` -> `/media/` (role/locale/channel)
-- [ ] Add: `GET /families/`, `/families/{code}/`, `/attributes/`, `/attributes/{code}/`, `/products/{id}/variants/`, `/variants/{sku}/`, `/products/{id}/media/`, `/products/{id}/relations/?type=`, `/products/{id}/completeness/?channel=&locale=`, `/channels/`, `/locales/`, `/categories/tree/`
+- [ ] Add: `GET /families/`, `/families/{code}/`, `/attributes/`, `/attributes/{code}/`, `/products/{id}/variants/`, `/variants/{sku}/`, `/products/{id}/media/`, `/products/{id}/relations/?type=`, `/products/{id}/completeness/?channel=&locale=` (treats empty MULTISELECT as unset; first writer of `completeness_cache`), `/channels/`, `/locales/`, `/categories/tree/` (sibling-slug + `sort` ordering decision — Gap 5)
+- [ ] Follow-up from 2.1 audit (Gap 3): variant-less legacy products — decide implicit-variant synthesis in `/products/` responses vs requiring a default variant at backfill/cutover
 - [ ] Defer `POST/PATCH /products/, /variants/, /values/` until reads stable
 
 ### 2.3 Admin (Unfold)

@@ -2,13 +2,8 @@ env
 .venv
 .env
 !.env.example
-core/__pycache__
-core/compressor/__pycache__
-core/settings/__pycache__
-api/__pycache__
-api/management/commands/__pycache__
-api/migrations/__pycache__
-script/gunicorn/__pycache__
+# Bytecode everywhere (per-path entries missed new apps twice already).
+**/__pycache__/
 data
 backups
 media

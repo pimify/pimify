@@ -28,6 +28,7 @@ THIRD_PARTY_APPS = [
     'djmoney.contrib.exchange',
     'django_apscheduler',
     'dbbackup',
+    'simple_history',  # Phase 2: Product/Variant/Value audit trail (Unfold-native)
 ]
 
 # Admin theme and related apps
