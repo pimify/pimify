@@ -95,11 +95,20 @@ Goal: minimal correct PIM domain in `catalog/`.
 - [x] Cleanup: audit probe rows removed from dev DB (AUD*/AUDIT-* products, c1/c2, reference rows + history orphans); SMOKE-001 fixture kept. Lesson re-proven: new uniqueness migrations fail on violating rows — resolve data BEFORE migrate, not after
 - [ ] Invert `Organization.api_keys FK` -> `APIKey.organization FK` — DEFERRED to cutover pass (auth-infra, not catalog; 1 key + 0 orgs, needs api migration + admin edit; group with router cutover)
 
-### 2.2 API (Ninja, read-first, paginated 20, X-API-Key public / django_auth write)
-- [ ] Keep: `GET /public/health`, `/organization` (add missing `auth`), `/products/`, `/products/{id}/`, `/categories/`, `/categories/{id}/products/`
-- [ ] Evolve: `/products/{id}/images/` -> `/media/` (role/locale/channel)
-- [ ] Add: `GET /families/`, `/families/{code}/`, `/attributes/`, `/attributes/{code}/`, `/products/{id}/variants/`, `/variants/{sku}/`, `/products/{id}/media/`, `/products/{id}/relations/?type=`, `/products/{id}/completeness/?channel=&locale=` (treats empty MULTISELECT as unset; first writer of `completeness_cache`), `/channels/`, `/locales/`, `/categories/tree/` (sibling-slug + `sort` ordering decision — Gap 5)
-- [ ] Follow-up from 2.1 audit (Gap 3): variant-less legacy products — decide implicit-variant synthesis in `/products/` responses vs requiring a default variant at backfill/cutover
+### 2.2 API (Ninja, read-first, paginated 20, X-API-Key public / django_auth write) — DONE 2026-10-02, uncommitted
+- [x] New `catalog/` router (`catalog/routers.py` + `catalog/schemas.py`, mounted in `api/main.py`): legacy `/public/` + `/private/` untouched until 1.4 cutover. Shared `api/auth.py:header_key` (extracted from public_routers, no behavior change)
+- [x] Keep (+1 security fix): `/organization` now requires `auth=header_key` (was open)
+- [x] Evolve: `GET /catalog/products/{id}/media/` (product + variant rows, variant sku set) supersedes legacy `/images/`; old path untouched until cutover
+- [x] Added (14 paths live, verified in OpenAPI schema): `families/`, `families/{code}/`, `attributes/`, `attributes/{code}/` (options nested), `products/` (search/active/family filters) + `products/{id}/` (categories w/ is_primary, values resolved, variants+values, product media; NO stock_quantity), `products/{id}/variants/`, `variants/{sku}/`, `products/{id}/media/`, `products/{id}/relations/?type=`, `products/{id}/completeness/?channel=&locale=`, `channels/`, `locales/`, `categories/tree/` (recursive, kind filter)
+- [x] Completeness engine: exact-scope OR global value match; empty MULTISELECT counts as unset (2.1 audit decision); 404 when no family/rule; writes `completeness_cache[channel]` via queryset.update (no history row, no updated_at bump) — first and only writer
+- [x] Error contract: all 404s return `{"error"}` matching declared schemas (bare get_object_or_404 renders `{"detail"}`, contradicting docs). Gotcha found by test: `@paginate` cannot return non-200 statuses in Ninja 1.7.1 (it paginates the error payload — plain tuples validate as 200, `Status` crashes with KeyError) → variants/media/relations lists are deliberately unpaginated (small per-product collections) with 404 declared
+- [x] Variant-less legacy products: exposed truthfully (empty variants array, no synthesis) — implicit-variant decision deferred to cutover
+- [x] 17 API tests (TestClient: auth, shapes, filters, math, tree, envelope, schema build); 51/51 suite green (55/55 after audit fixes); live smoke (tree, envelope, staff-only openapi redirect unchanged)
+- [x] FIX (audit 2026-10-02): deactivated API keys now rejected — `authenticate()` matches `is_active=True` (was: any stored key worked forever). Test: dead key → 401 on catalog + legacy paths
+- [x] FIX (audit 2026-10-02): cross-kind parenting forbidden in `Category.clean()` (master/collection trees must not interleave); `?kind=bogus` and `?type=bogus` now 400 `{"error"}` instead of silent `200 []`. Note: `slug` stays globally unique, so no extra `(parent, slug)` constraint needed. Mixed-kind rows can still only appear via `objects.create` bypass (no clean) — tree builder filters by kind, so they stay invisible rather than corrupt output
+- [x] Cleanup: unused `CategorySchema` import dropped from `catalog/routers.py`
+- DECISION (Gap 3): `completeness_cache` is advisory, endpoint is authoritative — values writes do NOT invalidate the cache; it refreshes only on `GET .../completeness/`. Revisit with signals if any consumer reads the column directly
+- DECISION (Gap 4): unpaginated lists stay unbounded for MVP (per-product collections are small); revisit with a cap if a product ever exceeds ~500 variants/media/relations
 - [ ] Defer `POST/PATCH /products/, /variants/, /values/` until reads stable
 
 ### 2.3 Admin (Unfold)

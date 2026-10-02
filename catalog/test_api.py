@@ -1,0 +1,235 @@
+"""Phase 2.2 API tests: auth, response shapes, filters, completeness math
+(incl. empty-multiselect-unset), tree nesting. Uses Ninja TestClient.
+"""
+from decimal import Decimal
+
+from django.test import TestCase
+from ninja.testing import TestClient
+
+from api.models import APIKey
+from catalog.models import (
+    AssociationTypes,
+    Attribute,
+    AttributeOption,
+    AttributeSet,
+    AttributeTypes,
+    Category,
+    Channel,
+    CompletenessRule,
+    Locale,
+    MediaRoles,
+    Product,
+    ProductAssociation,
+    ProductCategory,
+    ProductMedia,
+    ProductValue,
+    ProductVariant,
+    VariantValue,
+)
+from catalog.routers import router
+
+
+class CatalogApiTest(TestCase):
+    def setUp(self):
+        self.client = TestClient(router)
+        key = APIKey.objects.create(name='t')
+        self.h = {'X-API-Key': key.api_key}
+
+        self.locale = Locale.objects.create(code='en', name='English')
+        self.channel = Channel.objects.create(code='web', name='Web')
+        self.family = AttributeSet.objects.create(code='f', name='F')
+        self.color = Attribute.objects.create(code='color', label='Color')
+        self.size = Attribute.objects.create(
+            code='size', label='Size', type=AttributeTypes.TEXT, is_variant_axis=True)
+        self.family.attributes.add(self.color, self.size)
+        self.rule = CompletenessRule.objects.create(
+            channel=self.channel, locale=self.locale, family=self.family)
+        self.rule.required_attributes.add(self.color, self.size)
+
+        self.product = Product.objects.create(
+            sku='T-001', name='Tee', list_price=Decimal('9.99'),
+            family=self.family, is_active=True)
+        ProductValue.objects.create(
+            product=self.product, attribute=self.color, value_text='red')
+        self.variant = ProductVariant.objects.create(
+            product=self.product, sku='T-001-M', is_default=True)
+        VariantValue.objects.create(
+            variant=self.variant, attribute=self.size, value_text='M')
+        root = Category.objects.create(name='Root', slug='root')
+        child = Category.objects.create(name='Child', slug='child', parent=root)
+        ProductCategory.objects.create(
+            product=self.product, category=child, is_primary=True)
+        ProductMedia.objects.create(product=self.product, role=MediaRoles.MAIN, file='')
+        ProductMedia.objects.create(
+            variant=self.variant, role=MediaRoles.GALLERY, file='')
+        other = Product.objects.create(sku='T-002', name='Cap', list_price=Decimal('5'))
+        ProductAssociation.objects.create(
+            from_product=self.product, to_product=other, type=AssociationTypes.UPSELL)
+
+    # Auth ---------------------------------------------------------------
+
+    def test_unauthorized_without_key(self):
+        assert self.client.get('/products/').status_code == 401
+
+    def test_deactivated_key_rejected(self):
+        dead = APIKey.objects.create(name='dead', is_active=False)
+        h = {'X-API-Key': dead.api_key}
+        assert self.client.get('/products/', headers=h).status_code == 401
+        assert self.client.get('/families/', headers=h).status_code == 401
+
+    def test_organization_now_requires_key(self):
+        from api.main import app
+        c = TestClient(app)
+        assert c.get('/public/organization').status_code == 401
+
+    # Products ------------------------------------------------------------
+
+    def test_list_shape_has_no_stock_quantity(self):
+        r = self.client.get('/products/', headers=self.h)
+        assert r.status_code == 200, r.content[:200]
+        item = r.json()['items'][0]
+        assert item['sku'] == 'T-001'
+        assert item['price'] == 9.99 and item['currency'] == 'USD'
+        assert 'stock_quantity' not in item
+        assert item['family'] == 'f'
+
+    def test_list_filters(self):
+        assert self.client.get('/products/?search=tee', headers=self.h).json()['count'] == 1
+        assert self.client.get('/products/?search=nope', headers=self.h).json()['count'] == 0
+        assert self.client.get('/products/?is_active=false', headers=self.h).json()['count'] == 1
+        assert self.client.get('/products/?family=f', headers=self.h).json()['count'] == 1
+        assert self.client.get('/products/?family=zz', headers=self.h).json()['count'] == 0
+
+    def test_detail_nests_everything(self):
+        r = self.client.get(f'/products/{self.product.id}/', headers=self.h)
+        assert r.status_code == 200, r.content[:200]
+        d = r.json()
+        assert d['categories'][0]['is_primary'] is True
+        assert d['categories'][0]['category']['slug'] == 'child'
+        assert {'attribute': 'color', 'value': 'red'} == {
+            k: v for k, v in d['values'][0].items() if k in ('attribute', 'value')}
+        assert d['variants'][0]['sku'] == 'T-001-M'
+        assert d['variants'][0]['values'][0]['value'] == 'M'
+        assert len(d['media']) == 1  # product-owned only in detail
+        assert 'stock_quantity' not in d
+
+    # Families / attributes / refdata -------------------------------------
+
+    def test_families(self):
+        items = self.client.get('/families/', headers=self.h).json()['items']
+        assert items[0]['code'] == 'f'
+        d = self.client.get('/families/f/', headers=self.h).json()
+        assert sorted(d['attributes']) == ['color', 'size']
+
+    def test_attributes_with_options(self):
+        size = Attribute.objects.create(code='sz', label='Sz', type=AttributeTypes.SELECT)
+        AttributeOption.objects.create(attribute=size, code='s', label='S')
+        d = self.client.get('/attributes/sz/', headers=self.h).json()
+        assert d['options'][0]['code'] == 's'
+        assert self.client.get('/attributes/', headers=self.h).json()['count'] >= 3
+
+    def test_channels_locales(self):
+        assert self.client.get('/channels/', headers=self.h).json()['items'][0]['code'] == 'web'
+        assert self.client.get('/locales/', headers=self.h).json()['items'][0]['code'] == 'en'
+
+    def test_tree_nests_children(self):
+        roots = self.client.get('/categories/tree/', headers=self.h).json()
+        assert len(roots) == 1 and roots[0]['slug'] == 'root'
+        assert roots[0]['children'][0]['slug'] == 'child'
+        assert self.client.get('/categories/tree/?kind=collection', headers=self.h).json() == []
+
+    def test_tree_rejects_unknown_kind(self):
+        r = self.client.get('/categories/tree/?kind=bogus', headers=self.h)
+        assert r.status_code == 400
+        assert set(r.json()) == {'error'}
+
+    def test_cross_kind_parenting_rejected(self):
+        from django.core.exceptions import ValidationError
+        root = Category.objects.create(name='R', slug='xk-root')
+        with self.assertRaises(ValidationError):
+            Category(name='X', slug='xk-child', kind='collection', parent=root).full_clean()
+
+    # Variants / media / relations ------------------------------------------
+
+    def test_variants(self):
+        items = self.client.get(
+            f'/products/{self.product.id}/variants/', headers=self.h).json()
+        assert items[0]['sku'] == 'T-001-M' and items[0]['is_default'] is True
+        d = self.client.get('/variants/T-001-M/', headers=self.h).json()
+        assert d['values'][0] == {
+            'id': d['values'][0]['id'], 'attribute': 'size', 'type': 'text',
+            'channel': None, 'locale': None, 'value': 'M'}
+
+    def test_media_feed_combines_product_and_variant_rows(self):
+        items = self.client.get(
+            f'/products/{self.product.id}/media/', headers=self.h).json()
+        by_role = {m['role']: m for m in items}
+        assert by_role['main']['variant'] is None
+        assert by_role['gallery']['variant'] == 'T-001-M'
+
+    def test_relations_and_type_filter(self):
+        items = self.client.get(
+            f'/products/{self.product.id}/relations/', headers=self.h).json()
+        assert items[0] == {'id': items[0]['id'], 'to_product': 'T-002', 'type': 'upsell'}
+        assert self.client.get(
+            f'/products/{self.product.id}/relations/?type=bundle',
+            headers=self.h).json() == []
+
+    def test_relations_rejects_unknown_type(self):
+        r = self.client.get(
+            f'/products/{self.product.id}/relations/?type=bogus', headers=self.h)
+        assert r.status_code == 400
+        assert set(r.json()) == {'error'}
+
+    # Completeness ------------------------------------------------------------
+
+    def test_completeness_math_and_cache_write(self):
+        # color satisfied (product-level text), size missing (variant-level only).
+        r = self.client.get(
+            f'/products/{self.product.id}/completeness/?channel=web&locale=en',
+            headers=self.h)
+        assert r.status_code == 200, r.content[:200]
+        d = r.json()
+        assert d['percent'] == 50.0 and d['complete'] is False
+        assert d['missing'] == ['size'] and d['total_required'] == 2
+        self.product.refresh_from_db()
+        assert self.product.completeness_cache == {'web': 50.0}
+
+    def test_completeness_empty_multiselect_counts_as_unset(self):
+        ms = Attribute.objects.create(
+            code='tags', label='Tags', type=AttributeTypes.MULTISELECT)
+        self.rule.required_attributes.add(ms)
+        ProductValue.objects.create(product=self.product, attribute=ms)  # no options
+        d = self.client.get(
+            f'/products/{self.product.id}/completeness/?channel=web&locale=en',
+            headers=self.h).json()
+        assert 'tags' in d['missing']
+
+    def test_completeness_no_family_and_no_rule_are_404(self):
+        bare = Product.objects.create(sku='BARE', name='B', list_price=Decimal('1'))
+        r = self.client.get(
+            f'/products/{bare.id}/completeness/?channel=web&locale=en', headers=self.h)
+        assert r.status_code == 404
+        self.rule.delete()
+        r = self.client.get(
+            f'/products/{self.product.id}/completeness/?channel=web&locale=en', headers=self.h)
+        assert r.status_code == 404
+
+    # Error envelope + schema ---------------------------------------------
+
+    def test_404s_use_error_envelope(self):
+        for path in ('/families/zz/', '/attributes/zz/',
+                     '/products/zzz/', '/variants/zzz/',
+                     '/products/zzz/media/', '/products/zzz/relations/',
+                     '/products/zzz/completeness/?channel=web&locale=en'):
+            r = self.client.get(path, headers=self.h)
+            assert r.status_code == 404, path
+            assert set(r.json()) == {'error'}, (path, r.json())
+
+    def test_openapi_schema_builds_with_catalog_paths(self):
+        from api.main import app
+        schema = app.get_openapi_schema()
+        paths = schema['paths']
+        assert '/api/v1/catalog/products/{id}/' in paths
+        assert '/api/v1/catalog/categories/tree/' in paths
+        assert '/api/v1/catalog/products/{id}/completeness/' in paths

@@ -8,14 +8,14 @@ from django.db.models import Q
 # Django Ninja imports
 from ninja import Router, Query
 from ninja.pagination import paginate, PageNumberPagination
-from ninja.security import APIKeyHeader
 
 # Djnago Money imports
 from djmoney.contrib.exchange.models import Rate
 from djmoney.contrib.exchange.models import convert_money
 
 # Local imports
-from .models import Product, ProductImage, Category, APIKey, Organization
+from .auth import header_key
+from .models import Product, ProductImage, Category, Organization
 from .schemas import (
     Message,
     Error,
@@ -32,21 +32,6 @@ from .schemas import (
 # Initialize router
 router = Router()
 
-# Custom API Key authentication
-class ApiKey(APIKeyHeader):
-    """Custom API Key authentication using header."""
-    param_name = "X-API-Key"
-
-    def authenticate(self, request, key):
-        """Validate API key against database."""
-        try:
-            return APIKey.objects.get(api_key=key)
-        except APIKey.DoesNotExist:
-            pass
-
-# Initialize API key authentication
-header_key = ApiKey()
-
 # Health check endpoint
 @router.get("/health",
             response={200: Message, 204: None}, 
@@ -58,6 +43,7 @@ def health_check(request):
 
 # Retrieve organization details endpoint
 @router.get("/organization",
+            auth=header_key,
             response={200: OrganizationDetailSchema, 404: Error},
             tags=["Organization"])
 def get_organization_details(request):

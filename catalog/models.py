@@ -94,6 +94,9 @@ class Category(models.Model):
 
     def clean(self):
         super().clean()
+        if self.parent_id is not None and self.parent.kind != self.kind:
+            raise ValidationError(
+                {'parent': 'Parent must be of the same kind (master and collection trees must not interleave).'})
         # Guard against taxonomy cycles (A -> B -> A).
         seen = {self.pk} if self.pk else set()
         node = self.parent

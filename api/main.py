@@ -14,6 +14,7 @@ from ninja.throttling import AnonRateThrottle, AuthRateThrottle
 # Local imports
 from .public_routers import router as public_router
 from .private_routers import router as private_router
+from catalog.routers import router as catalog_router
 
 
 class ORJSONParser(Parser):
@@ -79,5 +80,6 @@ app = NinjaAPI(
 )
 
 # Register routers with their respective URL prefixes
-app.add_router("public/", public_router)   # Public endpoints
-app.add_router("private/", private_router) # Private/authenticated endpoints
+app.add_router("public/", public_router)   # Public endpoints (legacy api models)
+app.add_router("private/", private_router) # Private/authenticated endpoints (deprecated in Phase 1)
+app.add_router("catalog/", catalog_router) # Phase 2: pure-PIM catalog surface
