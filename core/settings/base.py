@@ -8,8 +8,8 @@ from django.templatetags.static import static
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Open exchange rate app id
-OPEN_EXCHANGE_RATES_APP_ID = config("OPEN_EXCHANGE_RATES_APP_ID")
+# Open exchange rate app id (empty disables exchange-rate jobs)
+OPEN_EXCHANGE_RATES_APP_ID = config("OPEN_EXCHANGE_RATES_APP_ID", default="")
 
 # Define application categories
 LOCAL_APPS = [
@@ -91,13 +91,13 @@ TEMPLATES = [
 WSGI_APPLICATION = "core.wsgi.application"
 
 # Database configuration using SQLite
+# NOTE: OPTIONS takes a single init_command — merge both PRAGMAs into one.
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / "../data/db.sqlite3",
         "OPTIONS": {
-            "init_command": "PRAGMA journal_mode=WAL;",  # Write-Ahead Logging
-            "init_command": "PRAGMA synchronous = NORMAL;",  # Optimize performance
+            "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous = NORMAL;",
             "timeout": 20,
         },
     }
@@ -132,6 +132,16 @@ STATICFILES_DIRS = [BASE_DIR / '../static_src']
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / '../media'
 
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+    },
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "LOCATION": MEDIA_ROOT,
+    },
+}
+
 # STATICFILES_STORAGE = "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"
 
 # Backup settings
@@ -144,8 +154,8 @@ def media_backup_filename(databasename, servername, datetime, extension, content
 DBBACKUP_STORAGE = 'django.core.files.storage.FileSystemStorage'
 DBBACKUP_STORAGE_OPTIONS = {'location': BASE_DIR / '../backups'}
 DBBACKUP_TMP_FILE_MAX_SIZE = 10*1024*1024
-DBBACKUP_CLEANUP_KEEP = 3
-DBBACKUP_CLEANUP_KEEP_MEDIA = 3
+DBBACKUP_CLEANUP_KEEP = config("DBBACKUP_CLEANUP_KEEP", default=3, cast=int)
+DBBACKUP_CLEANUP_KEEP_MEDIA = config("DBBACKUP_CLEANUP_KEEP_MEDIA", default=3, cast=int)
 DBBACKUP_FILENAME_TEMPLATE = db_backup_filename
 DBBACKUP_MEDIA_FILENAME_TEMPLATE = media_backup_filename
 

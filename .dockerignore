@@ -1,9 +1,7 @@
 .env
-.env.example
+.git
 .gitignore
-LICENSE
-README.md
-CONTRIBUTING.md
+.venv
 env
 data
 backups
@@ -13,8 +11,8 @@ core/__pycache__
 core/compressor/__pycache__
 core/settings/__pycache__
 api/__pycache__
-api/migrations
 api/management/commands/__pycache__
+api/migrations/__pycache__
 script/gunicorn/__pycache__
 script/start/install.sh
 script/start/install.bat

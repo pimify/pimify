@@ -1,50 +1,41 @@
 @echo off
+REM Pimify dev setup for Windows (uv). Run from project root.
 
-:: Check if Python is installed
-where python >nul
+where uv >nul
 if errorlevel 1 (
-    echo Python is not installed. Please install it before proceeding.
-    exit /b
+    echo uv is not installed. Install it first: https://docs.astral.sh/uv/getting-started/installation/
+    exit /b 1
 )
 
-:: Create virtual environment
-echo Creating virtual environment...
-python -m venv env
+echo Syncing dependencies with uv...
+uv sync --locked
+if errorlevel 1 exit /b %errorlevel%
 
-:: Activate virtual environment
-echo Activating virtual environment...
-call env\Scripts\activate
+if not exist .env (
+    echo Creating .env from .env.example...
+    copy .env.example .env
+)
 
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip
+echo Creating data, backups and media directories...
+mkdir data 2>nul
+mkdir backups 2>nul
+mkdir media 2>nul
 
-:: Install requirements
-echo Installing dependencies...
-pip install -r requirements.txt
+echo Checking for missing migrations...
+uv run python manage.py makemigrations --check --dry-run
 
-:: Create the 'data' and 'media' directory
-echo "Creating data, backup and media directory"
-mkdir data backups media
-
-:: Run migrations
 echo Running migrations...
-python manage.py migrate
-python manage.py makemigrations api
-python manage.py migrate
+REM --fake-initial: upgrades pre-uv installs whose api tables exist without a
+REM recorded migration; fresh DBs migrate normally.
+uv run python manage.py migrate --fake-initial
 
-:: Collect static
-echo Collect statis files...
-python manage.py collectstatic
+echo Collecting static files...
+uv run python manage.py collectstatic --noinput
 
-# Start the scheduler
-echo "Starting scheduler..."
-python manage.py scheduler
+REM NOTE: scheduler is blocking - run `uv run python manage.py scheduler` separately.
 
-# Create Superuser
-echo "Creating superuser..."
-python manage.py createsuperuser
+echo Creating superuser (Ctrl+C to skip)...
+uv run python manage.py createsuperuser
 
-:: Start the development server
 echo Starting the server...
-python manage.py runserver
+uv run python manage.py runserver

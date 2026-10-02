@@ -1,35 +1,23 @@
-#! OCI shell
+#!/bin/sh
+# Pimify container entrypoint (uv, OCI). Gunicorn is the last process.
+set -e
 
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip
+echo "Syncing dependencies with uv..."
+uv sync --locked --no-dev
 
-# Install requirements
-echo "Installing dependencies..."
-pip install --no-cache-dir -r requirements.txt
-
-# Create necessary directories
 echo "Ensuring necessary directories exist..."
 mkdir -p data backups media
 
-# Run migrations
 echo "Running migrations..."
-python manage.py migrate
-python manage.py makemigrations api
-python manage.py migrate
+# --fake-initial: see install.sh — upgrades pre-uv installs whose api tables
+# exist without a recorded migration; fresh DBs migrate normally.
+uv run python manage.py migrate --fake-initial
 
-# Collect static
-echo "Collect statis files..."
-python manage.py collectstatic --noinput
+echo "Collecting static files..."
+uv run python manage.py collectstatic --noinput
 
-# Start the scheduler
-echo "Starting scheduler..."
-python manage.py scheduler
+# NOTE: `manage.py scheduler` is a blocking BackgroundScheduler — run it as a
+# separate replica/service in production, not in this entrypoint.
 
-# Cleanup
-echo "Cleaning up..."
-rm -rf /root/.cache/pip /var/cache/apk/*
-
-# Start the development server
 echo "Starting the server..."
-gunicorn core.wsgi:application -c script/gunicorn/gunicorn.conf.py
+exec uv run gunicorn core.wsgi:application -c /etc/gunicorn/gunicorn.conf.py

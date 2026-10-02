@@ -4,8 +4,8 @@ from decouple import config
 import os
 import sys
 
-# Get MODE from environment
-MODE = config("MODE")
+# Get MODE from environment (defaults to development so `manage.py` works without .env)
+MODE = config("MODE", default="development")
 
 def main():
     """Run administrative tasks."""

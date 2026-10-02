@@ -5,6 +5,7 @@ from django_apscheduler.jobstores import DjangoJobStore
 from django_apscheduler.models import DjangoJobExecution
 from django_apscheduler import util
 from djmoney.contrib.exchange.backends import OpenExchangeRatesBackend
+from django.core.management import call_command
 from django.core.management.base import BaseCommand
 
 # Function to update exchange rates
