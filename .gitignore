@@ -6,5 +6,6 @@ env
 **/__pycache__/
 data
 backups
+feeds
 media
 static

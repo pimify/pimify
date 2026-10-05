@@ -23,6 +23,9 @@ from .models import (
     CategoryKind,
     Channel,
     CompletenessRule,
+    Feed,
+    FeedRun,
+    FeedRunStatus,
     Locale,
     Product,
     ProductAssociation,
@@ -41,6 +44,8 @@ from .schemas import (
     CompletenessSchema,
     FamilyDetailSchema,
     FamilyListSchema,
+    FeedRunSchema,
+    FeedSchema,
     LocaleSchema,
     MediaSchema,
     ProductDetailSchema,
@@ -268,7 +273,10 @@ def list_product_media(
     """Product media feed: product-owned rows plus variant rows (variant sku set).
 
     Optional channel/locale narrow to in-scope rows (global rows always
-    included). Supersedes legacy /public/products/{id}/images/.
+    included). NOTE: this is a lenient listing, not resolution — an omitted
+    axis means "don't filter on it" (unlike /values/, where an omitted axis
+    means "global rows only"). Feed builders always pass both params, which
+    makes the two agree. Supersedes legacy /public/products/{id}/images/.
     Unpaginated (see variants endpoint note on @paginate + error statuses).
     """
     product = or_404(
@@ -293,7 +301,10 @@ def list_resolved_values(
     """One winning value row per attribute for a (channel, locale) scope.
 
     Same fallback chain as the completeness engine (exact -> channel-only ->
-    locale-only -> global); unset rows never win. Unpaginated: one row per
+    locale-only -> global); unset rows never win. NOTE: this is strict
+    resolution — an omitted axis means "global rows only" (unlike /media/,
+    where an omitted axis means "don't filter"). Feed builders always pass
+    both params, which makes the two agree. Unpaginated: one row per
     attribute by construction.
     """
     product = or_404(
@@ -373,6 +384,12 @@ def product_completeness(request, id: str, channel: str, locale: str):
     values = list(ProductValue.objects.filter(product=product)
                   .select_related('attribute', 'option', 'channel', 'locale')
                   .prefetch_related('options'))
+    # Variant-axis attributes live on variants: a required attribute counts
+    # satisfied when ANY in-scope set value exists at product level or on any
+    # variant (axis placement is enforced in clean(), so levels can't mix).
+    values += list(VariantValue.objects.filter(variant__product=product)
+                   .select_related('attribute', 'option', 'channel', 'locale')
+                   .prefetch_related('options'))
     missing = [
         attr.code for attr in required
         if resolve_scoped_value(values, attr, channel, locale) is None
@@ -393,3 +410,59 @@ def product_completeness(request, id: str, channel: str, locale: str):
         'missing': missing,
         'total_required': total,
     }
+
+
+# Feeds -----------------------------------------------------------------------
+
+@router.get("/feeds/", auth=header_key,
+            response={200: List[FeedSchema], 404: Error}, tags=["Feeds"])
+@paginate(PageNumberPagination, page_size=20)
+def list_feeds(request, channel: Optional[str] = None,
+               locale: Optional[str] = None, is_active: Optional[bool] = None):
+    """Discover configured feeds (name/scope/format) before polling runs."""
+    feeds = Feed.objects.all()
+    if channel is not None:
+        feeds = feeds.filter(channel_id=channel)
+    if locale is not None:
+        feeds = feeds.filter(locale_id=locale)
+    if is_active is not None:
+        feeds = feeds.filter(is_active=is_active)
+    return feeds.order_by('name')
+
+
+@router.get("/feeds/runs/", auth=header_key,
+            response={200: List[FeedRunSchema], 404: Error}, tags=["Feeds"])
+@paginate(PageNumberPagination, page_size=20)
+def list_feed_runs(request, feed: Optional[int] = None,
+                   status: Optional[str] = None):
+    """List feed build runs (newest first). Pull model: consumers poll this,
+    then download the file of the latest successful run."""
+    runs = FeedRun.objects.select_related('feed')
+    if feed is not None:
+        runs = runs.filter(feed_id=feed)
+    if status is not None:
+        runs = runs.filter(status=status)
+    return runs
+
+
+@router.get("/feeds/runs/{id}/download/", auth=header_key,
+            response={200: None, 404: Error}, tags=["Feeds"])
+def download_feed_run(request, id: int):
+    """Download a successful run's file. Streams from FEEDS_ROOT; the path
+    is basename-guarded so a tampered `file` value can't escape the dir."""
+    from pathlib import Path
+
+    from django.conf import settings
+    from django.http import FileResponse
+
+    run = or_404(
+        lambda: get_object_or_404(FeedRun, id=id), f'FeedRun {id} not found.')
+    if isinstance(run, Status):
+        return run
+    if run.status != FeedRunStatus.SUCCESS or not run.file:
+        return 404, {'error': f'FeedRun {id} has no file to download.'}
+    path = Path(settings.FEEDS_ROOT) / Path(run.file).name
+    if not path.is_file():
+        return 404, {'error': f'Feed file for run {id} is missing from disk.'}
+    return FileResponse(open(path, 'rb'), as_attachment=True,
+                        filename=path.name)

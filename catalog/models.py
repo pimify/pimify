@@ -567,3 +567,60 @@ class CompletenessRule(models.Model):
 
     def __str__(self):
         return f"{self.family_id}/{self.channel_id}/{self.locale_id}"
+
+
+class FeedFormat(models.TextChoices):
+    JSON = 'json', 'JSON'
+    CSV = 'csv', 'CSV'
+
+
+class Feed(models.Model):
+    """A named outbound channel feed: resolved product payload for one scope.
+
+    Pull model only: `build_feed` renders the file, consumers fetch it via
+    the runs API. Direction is strictly PIM -> commerce; ERP/WMS remain
+    read-only sources outside PIM ownership (Phase 4 decision).
+    """
+
+    name = models.CharField(max_length=100, unique=True)
+    channel = models.ForeignKey(Channel, on_delete=models.PROTECT, related_name='feeds')
+    locale = models.ForeignKey(Locale, on_delete=models.PROTECT, related_name='feeds')
+    format = models.CharField(
+        max_length=4, choices=FeedFormat.choices, default=FeedFormat.JSON)
+    is_active = models.BooleanField(default=True)
+    only_complete = models.BooleanField(
+        default=False,
+        help_text="Exclude products below 100% completeness for this scope.")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} [{self.channel_id}/{self.locale_id}.{self.format}]"
+
+
+class FeedRunStatus(models.TextChoices):
+    SUCCESS = 'success', 'Success'
+    FAILED = 'failed', 'Failed'
+
+
+class FeedRun(models.Model):
+    """Append-only log of feed builds. Files live under FEEDS_ROOT, served
+    by the runs download endpoint. Never edited (audit trail)."""
+
+    feed = models.ForeignKey(Feed, on_delete=models.CASCADE, related_name='runs')
+    status = models.CharField(max_length=7, choices=FeedRunStatus.choices)
+    items = models.PositiveIntegerField(default=0)
+    skipped = models.JSONField(
+        default=list,
+        help_text="SKUs excluded by only_complete (or undefined completeness).")
+    file = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text="Path relative to FEEDS_ROOT; empty when the run failed.")
+    error = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.feed_id} {self.created_at:%Y-%m-%d %H:%M} {self.status} ({self.items})"

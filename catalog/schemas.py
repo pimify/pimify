@@ -257,6 +257,44 @@ class AssociationSchema(Schema):
         return obj.to_product.sku
 
 
+class FeedSchema(Schema):
+    id: int
+    name: str
+    channel: str
+    locale: str
+    format: str
+    is_active: bool
+    only_complete: bool = False
+
+    @staticmethod
+    def resolve_channel(obj):
+        return obj.channel_id
+
+    @staticmethod
+    def resolve_locale(obj):
+        return obj.locale_id
+
+
+class FeedRunSchema(Schema):
+    id: int
+    feed: int
+    feed_name: str = None
+    status: str
+    items: int
+    skipped: List[str] = []
+    file: str = ''
+    error: str = ''
+    created_at: datetime = None
+
+    @staticmethod
+    def resolve_feed(obj):
+        return obj.feed_id
+
+    @staticmethod
+    def resolve_feed_name(obj):
+        return obj.feed.name
+
+
 class CompletenessSchema(Schema):
     product: str
     channel: str

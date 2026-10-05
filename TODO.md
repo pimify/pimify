@@ -144,6 +144,19 @@ Goal: minimal correct PIM domain in `catalog/`.
 
 ## Phase 4 — Syndication + Integrations + Product Studio (Later)
 
+### 4.0 Generic outbound feed (STARTED 2026-10-05, uncommitted) — PIM→commerce pull model
+- [x] `Feed` (name unique, channel+locale FK PROTECT, format json/csv, is_active, only_complete) + `FeedRun` (append-only: status/items/skipped/file/error); migrations 0006 + 0007; FeedAdmin + read-only FeedRunAdmin
+- [x] `catalog/feeds.py`: resolved payload (product attrs via shared resolver, per-variant axis values, in-scope media with both params always set, completeness block or null when no rule, `only_complete` + `is_active` filtering); price/currency/description included (name/desc/price are global columns — scope applies to attributes+media); deterministic ordering (sku/code/sort+pk); JSON + CSV (one row per variant) renderers
+- [x] Review fixes: completeness counts variant values (engine + feed — variant-axis attrs can reach 100%; `test_api` updated); `only_complete` exclusions recorded in `FeedRun.skipped` (+ command output); rules prefetched once + media prefetched (no per-product queries); CSV cells raw strings (no JSON double-encode); download uses `FeedRunStatus` enum; `GET /feeds/` discovery endpoint; hermetic `tempfile` FEEDS_ROOT in tests
+- [x] `build_feed <name|id>` management command → `FEEDS_ROOT` (`BASE_DIR/../feeds`, gitignored); failed builds log a failed run and exit non-zero; inactive/unknown feeds refused
+- [x] Runs API: `GET /feeds/` + `GET /feeds/runs/` (paginated, filters) + `GET /feeds/runs/{id}/download/` (basename-guarded FileResponse; 404 envelope for failed/missing)
+- [x] 20 new tests; 102/102 suite green
+- [x] Scope-semantics decision locked + documented: `/values/` is strict (omitted axis = global-only), `/media/` is a lenient listing (omitted axis = no filter); feed path always passes both, so they agree
+- [x] Resolver tiebreak made pk-type agnostic (explicit two-stage compare; no pk negation)
+- [ ] Feed scheduling (per-feed cadence via cron calling `build_feed`; scheduler wiring deferred)
+- [ ] Platform mappings (Amazon/Flipkart/Shopify attribute profiles on top of the generic payload)
+- [ ] Live-bucket/off-site delivery (fetch from runs endpoint; push destinations later if needed)
+
 - [ ] Export engine first: generic `ChannelFeed (CSV/JSON) + webhook` per `Channel`, not 10 native connectors
 - [ ] Native connectors (Amazon, Flipkart, Shopify) one-by-one, outbound only: `PIM -> Commerce (title,attrs,media,list_price)`
 - [ ] ERP/WMS inbound read-only: `ERP -> PIM (stock_qty,cost as cache)`. NEVER let PIM own stock again

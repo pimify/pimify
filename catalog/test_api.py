@@ -184,16 +184,25 @@ class CatalogApiTest(TestCase):
     # Completeness ------------------------------------------------------------
 
     def test_completeness_math_and_cache_write(self):
-        # color satisfied (product-level text), size missing (variant-level only).
+        # color satisfied at product level, size satisfied on the variant —
+        # variant-axis attributes count when any variant carries them.
         r = self.client.get(
             f'/products/{self.product.id}/completeness/?channel=web&locale=en',
             headers=self.h)
         assert r.status_code == 200, r.content[:200]
         d = r.json()
-        assert d['percent'] == 50.0 and d['complete'] is False
-        assert d['missing'] == ['size'] and d['total_required'] == 2
+        assert d['percent'] == 100.0 and d['complete'] is True
+        assert d['missing'] == [] and d['total_required'] == 2
         self.product.refresh_from_db()
-        assert self.product.completeness_cache == {'web': 50.0}
+        assert self.product.completeness_cache == {'web': 100.0}
+
+    def test_completeness_truly_missing_variant_value(self):
+        # Deleting the variant value re-opens the gap (proves variants count).
+        VariantValue.objects.all().delete()
+        d = self.client.get(
+            f'/products/{self.product.id}/completeness/?channel=web&locale=en',
+            headers=self.h).json()
+        assert d['percent'] == 50.0 and d['missing'] == ['size']
 
     def test_completeness_empty_multiselect_counts_as_unset(self):
         ms = Attribute.objects.create(

@@ -127,6 +127,10 @@ STATICFILES_DIRS = [BASE_DIR / '../static_src']
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / '../media'
 
+# Phase 4 outbound feeds: rendered files land here, served by the runs
+# download endpoint (pull model). Local dir; off-site happens by fetching.
+FEEDS_ROOT = BASE_DIR / '../feeds'
+
 def _dbbackup_storage():
     """Backup storage alias: local dir unless S3 is configured (defined before
     STORAGES because the dict literal calls it). Credentials come from the

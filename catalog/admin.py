@@ -33,6 +33,8 @@ from .models import (
     Category,
     Channel,
     CompletenessRule,
+    Feed,
+    FeedRun,
     Locale,
     Product,
     ProductAssociation,
@@ -308,3 +310,32 @@ class CompletenessRuleAdmin(ModelAdmin, ImportExportModelAdmin):
     filter_horizontal = ('required_attributes',)
     import_form_class = ImportForm
     export_form_class = SelectableFieldsExportForm
+
+
+@admin.register(Feed)
+class FeedAdmin(ModelAdmin, ImportExportModelAdmin):
+    compressed_fields = True
+    warn_unsaved_form = True
+    list_display = ('name', 'channel', 'locale', 'format', 'is_active', 'only_complete')
+    list_filter = ('channel', 'locale', 'format', 'is_active')
+    search_fields = ['name']
+    import_form_class = ImportForm
+    export_form_class = SelectableFieldsExportForm
+
+
+@admin.register(FeedRun)
+class FeedRunAdmin(ModelAdmin):
+    """Append-only audit log: no add/change/delete through admin."""
+
+    list_display = ('feed', 'created_at', 'status', 'items', 'file')
+    list_filter = ('status', 'feed')
+    readonly_fields = ('feed', 'status', 'items', 'skipped', 'file', 'error', 'created_at')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
