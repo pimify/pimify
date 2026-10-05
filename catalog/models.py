@@ -233,6 +233,17 @@ class Product(models.Model):
         Brand, null=True, blank=True, on_delete=models.SET_NULL, related_name='products')
     list_price = MoneyField(max_digits=14, decimal_places=2, default_currency='USD')
     is_active = models.BooleanField(default=False)
+    is_published = models.BooleanField(
+        default=False,
+        help_text="Approved for feeds. is_active = exists in PIM; "
+                  "is_published = may leave the building.")
+    published_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="First build that shipped this product (frozen; the Studio "
+                  "diff baseline).")
+    last_shipped_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Most recent build that shipped this product.")
     categories = models.ManyToManyField(
         Category, through='ProductCategory', related_name='products')
     completeness_cache = models.JSONField(
@@ -591,11 +602,24 @@ class Feed(models.Model):
     only_complete = models.BooleanField(
         default=False,
         help_text="Exclude products below 100% completeness for this scope.")
+    schedule_cron = models.CharField(
+        max_length=100, blank=True, default='',
+        help_text="Crontab cadence (e.g. '0 6 * * *'); blank = manual builds only.")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.name} [{self.channel_id}/{self.locale_id}.{self.format}]"
+
+    def clean(self):
+        super().clean()
+        if self.schedule_cron:
+            from apscheduler.triggers.cron import CronTrigger  # local: avoid hard dep at import
+            try:
+                CronTrigger.from_crontab(self.schedule_cron)
+            except ValueError as exc:
+                from django.core.exceptions import ValidationError
+                raise ValidationError({'schedule_cron': f'Invalid crontab: {exc}'})
 
 
 class FeedRunStatus(models.TextChoices):
@@ -611,8 +635,9 @@ class FeedRun(models.Model):
     status = models.CharField(max_length=7, choices=FeedRunStatus.choices)
     items = models.PositiveIntegerField(default=0)
     skipped = models.JSONField(
-        default=list,
-        help_text="SKUs excluded by only_complete (or undefined completeness).")
+        default=dict,
+        help_text="{reason: [skus]} excluded from this build "
+                  "(unpublished / incomplete / no_rule).")
     file = models.CharField(
         max_length=255, blank=True, default='',
         help_text="Path relative to FEEDS_ROOT; empty when the run failed.")

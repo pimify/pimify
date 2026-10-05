@@ -242,14 +242,31 @@ class ProductAdmin(ModelAdmin, SimpleHistoryAdmin, ImportExportModelAdmin):
     compressed_fields = True
     warn_unsaved_form = True
     list_filter_submit = True
-    list_display = ('sku', 'name', 'brand', 'family', 'list_price', 'is_active', 'updated_at')
+    list_display = ('sku', 'name', 'brand', 'family', 'list_price',
+                    'is_active', 'is_published', 'updated_at')
     list_filter = (
         'is_active',
+        'is_published',
         'family',
         'brand',
         ('created_at', RangeDateFilter),
     )
     search_fields = ['sku', 'name']
+    actions = ['publish_selected', 'unpublish_selected']
+
+    @admin.action(description='Publish selected (approve for feeds)')
+    def publish_selected(self, request, queryset):
+        # Per-object save (not queryset.update) so the publish event lands
+        # in simple_history — the audit endpoint must show it.
+        for product in queryset:
+            product.is_published = True
+            product.save(update_fields=['is_published'])
+
+    @admin.action(description='Unpublish selected (hold back from feeds)')
+    def unpublish_selected(self, request, queryset):
+        for product in queryset:
+            product.is_published = False
+            product.save(update_fields=['is_published'])
     inlines = [
         ProductCategoryInline,
         ProductValueInline,
@@ -316,7 +333,8 @@ class CompletenessRuleAdmin(ModelAdmin, ImportExportModelAdmin):
 class FeedAdmin(ModelAdmin, ImportExportModelAdmin):
     compressed_fields = True
     warn_unsaved_form = True
-    list_display = ('name', 'channel', 'locale', 'format', 'is_active', 'only_complete')
+    list_display = ('name', 'channel', 'locale', 'format', 'is_active',
+                    'only_complete', 'schedule_cron')
     list_filter = ('channel', 'locale', 'format', 'is_active')
     search_fields = ['name']
     import_form_class = ImportForm

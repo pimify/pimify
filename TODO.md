@@ -154,6 +154,9 @@ Goal: minimal correct PIM domain in `catalog/`.
 - [x] Scope-semantics decision locked + documented: `/values/` is strict (omitted axis = global-only), `/media/` is a lenient listing (omitted axis = no filter); feed path always passes both, so they agree
 - [x] Resolver tiebreak made pk-type agnostic (explicit two-stage compare; no pk negation)
 - [ ] Feed scheduling (per-feed cadence via cron calling `build_feed`; scheduler wiring deferred)
+- [x] 4.1 publish gate + scheduling: `Product.is_published` (default False) + `published_at` (frozen first-ship; Studio diff baseline) + `last_shipped_at` (every ship); builder ships `is_active AND is_published` only; `FeedRun.skipped` is `{unpublished|incomplete|no_rule: [skus]}` (migration 0008 incl. RunPython converting legacy list rows); `Feed.schedule_cron` (blank = manual, validated at clean); `run_feed()` shared by `build_feed` and scheduler (one job per scheduled feed, `feed_<id>`); `GET /products/{id}/history/` audit endpoint (diff deferred to Studio); admin publish/unpublish actions (per-object saves → history rows). Cron alternative: system cron calling `build_feed` per feed for deployments skipping the scheduler process
+- [x] 4.1 review fixes: legacy list-skipped data migration; scheduler skips invalid-cron rows with a warning (one bad row can't kill backups) + purges stale `feed_*` jobs; stamps move to after the file write (failed builds stamp nothing); bulk publish via save() so history records it; history schema gains published_at/last_shipped_at; is_published exposed on product list/detail schemas
+- [x] 4.1 tests: 118/118 suite green
 - [ ] Platform mappings (Amazon/Flipkart/Shopify attribute profiles on top of the generic payload)
 - [ ] Live-bucket/off-site delivery (fetch from runs endpoint; push destinations later if needed)
 

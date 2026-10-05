@@ -23,13 +23,36 @@ def backup_media_every_month():
     except Exception as e:
         print(f"An error occurred during media backup: {e}")
 
+# Scheduled channel feeds: one job per active feed with a crontab cadence.
+# Runs in-process via catalog.feeds.run_feed (same path as `build_feed`);
+# failures are already recorded as failed FeedRuns there.
+@util.close_old_connections
+def build_scheduled_feed(feed_id):
+    from catalog.feeds import run_feed
+    from catalog.models import Feed
+    try:
+        feed = Feed.objects.get(pk=feed_id, is_active=True)
+    except Feed.DoesNotExist:
+        print(f"Scheduled feed {feed_id} gone or inactive; skipping.")
+        return
+    try:
+        run = run_feed(feed)
+        print(f"Scheduled feed {feed.name!r}: {run.items} products (run {run.pk}).")
+    except Exception as e:
+        print(f"Scheduled feed {feed.name!r} failed: {e}")
+
+def scheduled_feeds():
+    """Active feeds with a crontab cadence (blank = manual builds only)."""
+    from catalog.models import Feed
+    return Feed.objects.filter(is_active=True).exclude(schedule_cron='')
+
 # Function to delete old job executions
 @util.close_old_connections  # Ensures database connections are closed properly
 def delete_old_job_executions(max_age=7):
     DjangoJobExecution.objects.delete_old_job_executions(max_age)  # Delete jobs older than 'max_age' days
 
-# Function to start the scheduler
-def start():
+# Build the scheduler (testable without blocking); start() runs it.
+def build_scheduler():
     scheduler = BackgroundScheduler()  # Create a background scheduler
     scheduler.add_jobstore(DjangoJobStore(), "default")  # Use Django's database as the job store
 
@@ -60,6 +83,39 @@ def start():
         id="delete_old_job_executions",
         replace_existing=True,
     )
+
+    # One job per scheduled feed (cron validated at Feed.clean time, but
+    # rows can bypass validation via shell/import — a single bad row must
+    # never take down backups. Stale feed_* jobs (cron cleared, feed gone)
+    # are removed so old cadences stop firing.)
+    wanted = set()
+    for feed in scheduled_feeds():
+        try:
+            trigger = CronTrigger.from_crontab(feed.schedule_cron)
+        except ValueError as exc:
+            print(f"Feed {feed.name!r} has invalid cron "
+                  f"{feed.schedule_cron!r} ({exc}); skipping.")
+            continue
+        job_id = f"feed_{feed.pk}"
+        wanted.add(job_id)
+        scheduler.add_job(
+            build_scheduled_feed,
+            trigger=trigger,
+            args=[feed.pk],
+            jobstore='default',
+            id=job_id,
+            replace_existing=True,
+        )
+    for job in scheduler.get_jobs():
+        if job.id.startswith('feed_') and job.id not in wanted:
+            scheduler.remove_job(job.id, jobstore='default')
+            print(f"Removed stale scheduled job {job.id}.")
+
+    return scheduler
+
+# Function to start the scheduler
+def start():
+    scheduler = build_scheduler()
 
     try:
         scheduler.start()  # Start the scheduler

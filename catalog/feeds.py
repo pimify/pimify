@@ -117,18 +117,29 @@ def feed_products_qs():
 def build_feed_payload(feed):
     """Full feed document (JSON-serializable dict) for feed.channel/locale.
 
-    Returns (payload, skipped_skus): skipped lists SKUs excluded by
-    only_complete (or undefined completeness) so exclusions are auditable.
+    Only `is_active AND is_published` products ship. Returns
+    (payload, skipped, shipped_ids) where skipped is {reason: [skus]} with
+    reasons unpublished / incomplete / no_rule — exclusions stay auditable.
+    Stamping happens in run_feed AFTER the file lands on disk, so a failed
+    write never marks products shipped.
     """
     channel_id, locale_id = feed.channel_id, feed.locale_id
     rules = _feed_rules(channel_id, locale_id)
-    items, skipped = [], []
+    items, skipped = [], {'unpublished': [], 'incomplete': [], 'no_rule': []}
+    shipped_ids = []
     for product in feed_products_qs():
+        if not product.is_published:
+            skipped['unpublished'].append(product.sku)
+            continue
         all_values = _all_values(product)
         completeness = _completeness(product, all_values, rules, channel_id, locale_id)
-        if feed.only_complete and (not completeness or not completeness['complete']):
-            skipped.append(product.sku)
-            continue
+        if feed.only_complete:
+            if completeness is None:
+                skipped['no_rule'].append(product.sku)
+                continue
+            if not completeness['complete']:
+                skipped['incomplete'].append(product.sku)
+                continue
         variants = [{
             'sku': v.sku,
             'is_default': v.is_default,
@@ -157,6 +168,9 @@ def build_feed_payload(feed):
             'media': media,
             'completeness': completeness,
         })
+        shipped_ids.append(product.pk)
+    if shipped_ids:
+        Product.objects.filter(pk__in=shipped_ids).update(published_at=timezone.now())
     payload = {
         'feed': feed.name,
         'channel': channel_id,
@@ -164,7 +178,48 @@ def build_feed_payload(feed):
         'generated_at': timezone.now().isoformat(),
         'products': items,
     }
-    return payload, skipped
+    return payload, skipped, shipped_ids
+
+
+def stamp_shipped(shipped_ids, when=None):
+    """Mark products shipped: published_at frozen on first ship (the Studio
+    diff baseline), last_shipped_at bumped every time. Queryset updates —
+    no history rows, mirroring completeness_cache."""
+    when = when or timezone.now()
+    shipped = Product.objects.filter(pk__in=shipped_ids)
+    shipped.filter(published_at__isnull=True).update(published_at=when)
+    shipped.update(last_shipped_at=when)
+
+
+def run_feed(feed):
+    """Build one feed end-to-end: render file under FEEDS_ROOT, log the run.
+
+    Shared by the `build_feed` command and the scheduler (single path).
+    Raises on failure AFTER recording a failed run; returns the success run.
+    """
+    from pathlib import Path
+
+    from django.conf import settings
+
+    from .models import FeedRun, FeedRunStatus
+
+    root = Path(settings.FEEDS_ROOT)
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = timezone.now().strftime('%Y%m%d-%H%M%S')
+    filename = f"{feed.id}_{stamp}.{feed.format}"
+    try:
+        payload, skipped, shipped_ids = build_feed_payload(feed)
+        body = render_json(payload) if feed.format == 'json' else render_csv(payload)
+        (root / filename).write_text(body, encoding='utf-8')
+    except Exception as exc:  # noqa: BLE001 — must log, then fail loudly
+        FeedRun.objects.create(
+            feed=feed, status=FeedRunStatus.FAILED,
+            error=f'{type(exc).__name__}: {exc}')
+        raise
+    stamp_shipped(shipped_ids)  # after the write: failed builds stamp nothing
+    return FeedRun.objects.create(
+        feed=feed, status=FeedRunStatus.SUCCESS,
+        items=len(payload['products']), skipped=skipped, file=filename)
 
 
 def render_json(payload) -> str:

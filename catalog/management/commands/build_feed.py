@@ -1,17 +1,14 @@
-"""Phase 4: render a Feed to FEEDS_ROOT and log the run.
+"""Phase 4.1: render a Feed to FEEDS_ROOT and log the run.
 
 Pull model: this command builds the file; commerce platforms fetch it via
 the runs download endpoint. Failure records a failed FeedRun (with the
-error) and exits non-zero, so cron/scheduler surfaces it.
+error) and exits non-zero, so cron/scheduler surfaces it. Thin wrapper
+over catalog.feeds.run_feed (shared with the scheduler).
 """
-from pathlib import Path
-
-from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.utils import timezone
 
-from catalog.feeds import build_feed_payload, render_csv, render_json
-from catalog.models import Feed, FeedRun, FeedRunStatus
+from catalog.feeds import run_feed
+from catalog.models import Feed
 
 
 class Command(BaseCommand):
@@ -27,21 +24,11 @@ class Command(BaseCommand):
             raise CommandError(f'Feed {feed!r} not found.')
         if not obj.is_active:
             raise CommandError(f'Feed {obj.name!r} is inactive; not building.')
-        root = Path(settings.FEEDS_ROOT)
-        root.mkdir(parents=True, exist_ok=True)
-        stamp = timezone.now().strftime('%Y%m%d-%H%M%S')
-        filename = f"{obj.id}_{stamp}.{obj.format}"
         try:
-            payload, skipped = build_feed_payload(obj)
-            body = render_json(payload) if obj.format == 'json' else render_csv(payload)
-            (root / filename).write_text(body, encoding='utf-8')
-        except Exception as exc:  # noqa: BLE001 — must log, then fail loudly
-            FeedRun.objects.create(
-                feed=obj, status=FeedRunStatus.FAILED, error=f'{type(exc).__name__}: {exc}')
+            run = run_feed(obj)
+        except Exception as exc:  # noqa: BLE001 — run already logged as failed
             raise CommandError(f'Feed {obj.name!r} failed: {exc}') from exc
-        run = FeedRun.objects.create(
-            feed=obj, status=FeedRunStatus.SUCCESS,
-            items=len(payload['products']), skipped=skipped, file=filename)
-        skipped_msg = f' ({len(skipped)} skipped)' if skipped else ''
+        skipped_total = sum(len(v) for v in run.skipped.values())
+        skipped_msg = f' ({skipped_total} skipped)' if skipped_total else ''
         self.stdout.write(self.style.SUCCESS(
-            f'Feed {obj.name!r}: {run.items} products -> {filename}{skipped_msg} (run {run.pk})'))
+            f'Feed {obj.name!r}: {run.items} products -> {run.file}{skipped_msg} (run {run.pk})'))

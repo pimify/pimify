@@ -49,6 +49,7 @@ from .schemas import (
     LocaleSchema,
     MediaSchema,
     ProductDetailSchema,
+    ProductHistorySchema,
     ProductListSchema,
     VariantSchema,
 )
@@ -236,6 +237,19 @@ def retrieve_catalog_product(request, id: str):
     return or_404(
         lambda: get_object_or_404(_product_detail_qs(), id=id),
         f'Product {id} not found.')
+
+
+@router.get("/products/{id}/history/", auth=header_key,
+            response={200: List[ProductHistorySchema], 404: Error}, tags=["Product"])
+@paginate(PageNumberPagination, page_size=20)
+def product_history(request, id: str):
+    """Audit trail of a product (newest first). Field-level diff against
+    published_at is a Studio feature; this endpoint exposes the raw log."""
+    product = or_404(
+        lambda: get_object_or_404(Product, id=id), f'Product {id} not found.')
+    if isinstance(product, Status):
+        return product
+    return product.history.all()
 
 
 @router.get("/products/{id}/variants/", auth=header_key,

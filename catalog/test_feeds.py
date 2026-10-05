@@ -51,7 +51,8 @@ def make_catalog(channel, locale):
     rule.required_attributes.add(color, size)
     product = Product.objects.create(
         sku='F-001', name='Shirt', description='A fine shirt.',
-        list_price=Decimal('29.99'), family=family, is_active=True)
+        list_price=Decimal('29.99'), family=family, is_active=True,
+        is_published=True)
     ProductValue.objects.create(
         product=product, attribute=color, value_text='red')
     ProductValue.objects.create(
@@ -82,9 +83,50 @@ class FeedPayloadTest(TestCase):
             name='web-de', channel=self.channel, locale=self.locale)
 
     def _payload(self):
-        payload, skipped = build_feed_payload(self.feed)
-        assert skipped == []
+        payload, skipped, _ = build_feed_payload(self.feed)
+        assert skipped == {'unpublished': [], 'incomplete': [], 'no_rule': []}
         return payload
+
+    def test_unpublished_products_gated(self):
+        self.product.is_published = False
+        self.product.save()
+        payload, skipped, _ = build_feed_payload(self.feed)
+        self.assertEqual(payload['products'], [])
+        self.assertEqual(skipped['unpublished'], ['F-001'])
+
+    def test_publish_action_writes_history(self):
+        from django.contrib import admin
+        from catalog.admin import ProductAdmin
+        from catalog.models import Product
+        pa = ProductAdmin(Product, admin.site)
+        pa.publish_selected(None, Product.objects.filter(pk=self.product.pk))
+        self.product.refresh_from_db()
+        self.assertTrue(self.product.is_published)
+        self.assertTrue(self.product.history.first().is_published)
+
+    def test_published_at_frozen_last_shipped_bumped(self):        # Stamping is run_feed's job (after the write); build only collects.
+        from datetime import timedelta
+        from django.utils import timezone
+        from catalog.feeds import stamp_shipped
+        first = timezone.now() - timedelta(days=1)
+        self.product.published_at = first
+        self.product.save()
+        stamp_shipped([self.product.pk])
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.published_at, first)  # frozen
+        self.assertGreater(self.product.last_shipped_at, first)  # bumped
+
+    def test_no_rule_skipped_only_when_gated(self):
+        self.product.family = None
+        self.product.save()
+        payload, skipped, _ = build_feed_payload(self.feed)
+        self.assertEqual(len(payload['products']), 1)  # shipped, null block
+        self.assertEqual(skipped['no_rule'], [])
+        self.feed.only_complete = True
+        self.feed.save()
+        payload, skipped, _ = build_feed_payload(self.feed)
+        self.assertEqual(payload['products'], [])
+        self.assertEqual(skipped['no_rule'], ['F-001'])
 
     def test_product_attributes_resolve_exact(self):
         item = self._payload()['products'][0]
@@ -116,24 +158,27 @@ class FeedPayloadTest(TestCase):
     def test_only_complete_includes_complete_product(self):
         self.feed.only_complete = True
         self.feed.save()
-        payload, skipped = build_feed_payload(self.feed)
+        payload, skipped, _ = build_feed_payload(self.feed)
         self.assertEqual(len(payload['products']), 1)
-        self.assertEqual(skipped, [])
+        self.assertEqual(
+            skipped, {'unpublished': [], 'incomplete': [], 'no_rule': []})
 
     def test_only_complete_skips_and_audits(self):
         VariantValue.objects.all().delete()  # re-open the size gap
         self.feed.only_complete = True
         self.feed.save()
-        payload, skipped = build_feed_payload(self.feed)
+        payload, skipped, _ = build_feed_payload(self.feed)
         self.assertEqual(payload['products'], [])
-        self.assertEqual(skipped, ['F-001'])
+        self.assertEqual(skipped['incomplete'], ['F-001'])
 
-    def test_inactive_products_excluded(self):
+    def test_inactive_products_excluded_silently(self):
         self.product.is_active = False
         self.product.save()
-        payload, skipped = build_feed_payload(self.feed)
+        payload, skipped, _ = build_feed_payload(self.feed)
         self.assertEqual(payload['products'], [])
-        self.assertEqual(skipped, [])  # inactive != skipped (not a candidate)
+        # Inactive products aren't candidates at all (no skip reason).
+        self.assertEqual(
+            skipped, {'unpublished': [], 'incomplete': [], 'no_rule': []})
 
     def test_json_renders(self):
         payload = self._payload()
@@ -171,9 +216,30 @@ class BuildFeedCommandTest(TempFeedsMixin, TestCase):
     def setUp(self):
         super().setUp()
         self.channel, self.locale = make_scope()
-        make_catalog(self.channel, self.locale)
+        self.product = make_catalog(self.channel, self.locale)
         self.feed = Feed.objects.create(
             name='web-de', channel=self.channel, locale=self.locale)
+
+    def test_failed_build_stamps_nothing(self):
+        from unittest.mock import patch
+        from catalog.feeds import run_feed
+        with patch('catalog.feeds.build_feed_payload',
+                   side_effect=RuntimeError('disk on fire')):
+            with self.assertRaises(RuntimeError):
+                run_feed(self.feed)
+        run = FeedRun.objects.get()
+        self.assertEqual(run.status, 'failed')
+        self.product.refresh_from_db()
+        self.assertIsNone(self.product.published_at)
+        self.assertIsNone(self.product.last_shipped_at)
+
+    def test_successful_build_stamps_shipped(self):
+        from io import StringIO
+        from django.core.management import call_command
+        call_command('build_feed', 'web-de', stdout=StringIO())
+        self.product.refresh_from_db()
+        self.assertIsNotNone(self.product.published_at)
+        self.assertIsNotNone(self.product.last_shipped_at)
 
     def test_success_logs_run_and_writes_file(self):
         from io import StringIO
@@ -182,7 +248,8 @@ class BuildFeedCommandTest(TempFeedsMixin, TestCase):
         run = FeedRun.objects.get()
         self.assertEqual(run.status, 'success')
         self.assertEqual(run.items, 1)
-        self.assertEqual(run.skipped, [])
+        self.assertEqual(
+            run.skipped, {'unpublished': [], 'incomplete': [], 'no_rule': []})
         self.assertTrue((self.feeds_root() / run.file).is_file())
 
     def test_skipped_recorded_on_run(self):
@@ -193,8 +260,9 @@ class BuildFeedCommandTest(TempFeedsMixin, TestCase):
         self.feed.save()
         call_command('build_feed', 'web-de', stdout=StringIO())
         run = FeedRun.objects.get()
-        self.assertEqual((run.status, run.items, run.skipped),
-                         ('success', 0, ['F-001']))
+        self.assertEqual(run.status, 'success')
+        self.assertEqual(run.items, 0)
+        self.assertEqual(run.skipped['incomplete'], ['F-001'])
 
     def test_unknown_feed_raises_without_run(self):
         from django.core.management import call_command
@@ -220,7 +288,7 @@ class FeedRunsApiTest(TempFeedsMixin, TestCase):
         key = APIKey.objects.create(name='f')
         self.h = {'X-API-Key': key.api_key}
         self.channel, self.locale = make_scope()
-        make_catalog(self.channel, self.locale)
+        self.product = make_catalog(self.channel, self.locale)
         self.feed = Feed.objects.create(
             name='web-de', channel=self.channel, locale=self.locale)
         self.run = FeedRun.objects.create(feed=self.feed, status='success',
@@ -239,7 +307,7 @@ class FeedRunsApiTest(TempFeedsMixin, TestCase):
                                   headers=self.h).json()
         self.assertEqual([r['status'] for r in only_ok['items']], ['success'])
         self.assertEqual(only_ok['items'][0]['feed_name'], 'web-de')
-        self.assertEqual(only_ok['items'][0]['skipped'], [])
+        self.assertEqual(only_ok['items'][0]['skipped'], {})
 
     def test_download_missing_file_404(self):
         r = self.client.get(f'/feeds/runs/{self.run.id}/download/',
@@ -259,3 +327,108 @@ class FeedRunsApiTest(TempFeedsMixin, TestCase):
         r = self.client.get(f'/feeds/runs/{failed.id}/download/',
                             headers=self.h)
         self.assertEqual(r.status_code, 404)
+
+    def test_product_history_endpoint(self):
+        self.product.name = 'Shirt v2'
+        self.product.save()
+        body = self.client.get(
+            f'/products/{self.product.id}/history/', headers=self.h).json()
+        self.assertGreaterEqual(body['count'], 2)
+        latest = body['items'][0]
+        self.assertEqual(latest['name'], 'Shirt v2')
+        self.assertIn('is_published', latest)
+
+
+class FeedScheduleTest(TempFeedsMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        self.channel, self.locale = make_scope()
+
+    def _feed(self, **kw):
+        kw.setdefault('channel', self.channel)
+        kw.setdefault('locale', self.locale)
+        return Feed(name='sched', **kw)
+
+    def test_blank_cron_valid(self):
+        self._feed().full_clean()  # no raise
+
+    def test_valid_cron_accepted(self):
+        self._feed(schedule_cron='0 6 * * *').full_clean()  # no raise
+
+    def test_invalid_cron_rejected(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self._feed(schedule_cron='not a cron').full_clean()
+
+    def test_scheduler_registers_only_scheduled_feeds(self):
+        from api.management.commands.scheduler import (
+            build_scheduler, scheduled_feeds,
+        )
+        cron = Feed.objects.create(name='cron', channel=self.channel,
+                                   locale=self.locale, schedule_cron='0 6 * * *')
+        Feed.objects.create(name='manual', channel=self.channel,
+                            locale=self.locale)
+        Feed.objects.create(name='off', channel=self.channel,
+                            locale=self.locale, schedule_cron='0 6 * * *',
+                            is_active=False)
+        self.assertEqual(
+            sorted(f.name for f in scheduled_feeds()), ['cron'])
+        scheduler = build_scheduler()  # built, never started (non-blocking)
+        job_ids = sorted(j.id for j in scheduler.get_jobs())
+        self.assertIn('db_backup', job_ids)
+        self.assertEqual(
+            [j for j in job_ids if j.startswith('feed_')], [f'feed_{cron.pk}'])
+
+    def test_build_scheduled_feed_skips_dead_feed(self):
+        from api.management.commands.scheduler import build_scheduled_feed
+        build_scheduled_feed(424242)  # gone feed id: prints, no raise/run
+        self.assertEqual(FeedRun.objects.count(), 0)
+
+    def test_build_scheduled_feed_runs_live_feed(self):
+        from api.management.commands.scheduler import build_scheduled_feed
+        feed = Feed.objects.create(name='cron', channel=self.channel,
+                                   locale=self.locale, schedule_cron='0 6 * * *')
+        build_scheduled_feed(feed.pk)  # no catalog rows: empty but successful
+        run = FeedRun.objects.get()
+        self.assertEqual((run.status, run.items), ('success', 0))
+        self.assertTrue((self.feeds_root() / run.file).is_file())
+
+    def test_scheduler_skips_invalid_cron(self):
+        from api.management.commands.scheduler import build_scheduler
+        bad = Feed.objects.create(name='bad', channel=self.channel,
+                                  locale=self.locale, schedule_cron='garbage')
+        scheduler = build_scheduler()  # must not raise (backups must survive)
+        job_ids = [j.id for j in scheduler.get_jobs()]
+        self.assertIn('db_backup', job_ids)
+        self.assertNotIn(f'feed_{bad.pk}', job_ids)
+
+    def test_scheduler_purges_stale_feed_jobs(self):
+        from api.management.commands.scheduler import build_scheduler
+        feed = Feed.objects.create(name='cron', channel=self.channel,
+                                   locale=self.locale, schedule_cron='0 6 * * *')
+        scheduler = build_scheduler()
+        self.assertIn(f'feed_{feed.pk}', [j.id for j in scheduler.get_jobs()])
+        feed.schedule_cron = ''  # back to manual: job must go away
+        feed.save()
+        scheduler = build_scheduler()
+        self.assertNotIn(f'feed_{feed.pk}', [j.id for j in scheduler.get_jobs()])
+
+    def test_legacy_list_skipped_converted(self):
+        import importlib
+        from django.apps import apps
+        migration = importlib.import_module(
+            'catalog.migrations.0008_feed_schedule_cron_'
+            'historicalproduct_is_published_and_more')
+        run = FeedRun.objects.create(feed=self.cron_feed(), status='success',
+                                     items=0, file='')
+        FeedRun.objects.filter(pk=run.pk).update(skipped=['F-001'])
+        migration._wrap_legacy_skipped(apps, None)
+        run.refresh_from_db()
+        self.assertEqual(run.skipped, {'incomplete': ['F-001']})
+        migration._unwrap_legacy_skipped(apps, None)
+        run.refresh_from_db()
+        self.assertEqual(run.skipped, ['F-001'])
+
+    def cron_feed(self):
+        return Feed.objects.create(name='cronx', channel=self.channel,
+                                   locale=self.locale)

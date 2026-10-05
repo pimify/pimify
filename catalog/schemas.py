@@ -4,7 +4,7 @@ Same class names as api/schemas.py on purpose — these shapes prefigure the
 1.4 cutover, when catalog querysets replace the legacy api ones.
 """
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ninja import Schema
 
@@ -209,6 +209,7 @@ class ProductListSchema(Schema):
     price: float
     currency: str
     is_active: bool
+    is_published: bool = False
     brand: Optional[str] = None
     family: Optional[str] = None
 
@@ -257,6 +258,18 @@ class AssociationSchema(Schema):
         return obj.to_product.sku
 
 
+class ProductHistorySchema(Schema):
+    history_id: int
+    history_date: Optional[datetime] = None
+    history_type: Optional[str] = None
+    history_user_id: Optional[int] = None
+    name: Optional[str] = None
+    is_active: bool = False
+    is_published: bool = False
+    published_at: Optional[datetime] = None
+    last_shipped_at: Optional[datetime] = None
+
+
 class FeedSchema(Schema):
     id: int
     name: str
@@ -265,6 +278,7 @@ class FeedSchema(Schema):
     format: str
     is_active: bool
     only_complete: bool = False
+    schedule_cron: str = ''
 
     @staticmethod
     def resolve_channel(obj):
@@ -281,7 +295,7 @@ class FeedRunSchema(Schema):
     feed_name: str = None
     status: str
     items: int
-    skipped: List[str] = []
+    skipped: Dict[str, List[str]] = {}
     file: str = ''
     error: str = ''
     created_at: datetime = None
