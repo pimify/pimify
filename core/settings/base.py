@@ -127,6 +127,29 @@ STATICFILES_DIRS = [BASE_DIR / '../static_src']
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / '../media'
 
+def _dbbackup_storage():
+    """Backup storage alias: local dir unless S3 is configured (defined before
+    STORAGES because the dict literal calls it). Credentials come from the
+    standard AWS env chain, never from settings."""
+    bucket = config("DBBACKUP_S3_BUCKET", default="")
+    if not bucket:
+        return {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+            "OPTIONS": {"location": BASE_DIR / "../backups"},
+        }
+    options = {"bucket_name": bucket}
+    endpoint = config("DBBACKUP_S3_ENDPOINT_URL", default="")
+    if endpoint:
+        options["endpoint_url"] = endpoint  # MinIO / S3-compatible API
+    region = config("DBBACKUP_S3_REGION", default="")
+    if region:
+        options["region_name"] = region
+    prefix = config("DBBACKUP_S3_PREFIX", default="pimify/")
+    if prefix:
+        options["location"] = prefix
+    return {"BACKEND": "storages.backends.s3.S3Storage", "OPTIONS": options}
+
+
 STORAGES = {
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
@@ -137,10 +160,10 @@ STORAGES = {
     },
     # django-dbbackup >= 5 reads STORAGES["dbbackup"] (the old
     # DBBACKUP_STORAGE[_OPTIONS] settings raise RuntimeError there).
-    "dbbackup": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
-        "OPTIONS": {"location": BASE_DIR / "../backups"},
-    },
+    # Local filesystem by default; S3 when DBBACKUP_S3_BUCKET is set.
+    # Credentials come from the standard AWS env chain (AWS_ACCESS_KEY_ID /
+    # AWS_SECRET_ACCESS_KEY), so they are never written into settings.
+    "dbbackup": _dbbackup_storage(),
 }
 
 # STATICFILES_STORAGE = "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"

@@ -1,6 +1,8 @@
 from decouple import config
 from urllib.parse import urlparse
 from .base import *
+# NOTE: underscore-private, so not carried by the star import above.
+from .base import _dbbackup_storage
 
 # Debug is always False in production (ignore env to avoid accidents).
 DEBUG = False
@@ -69,9 +71,6 @@ STORAGES = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
         "LOCATION": MEDIA_ROOT,  # Ensure MEDIA_ROOT is defined above
     },
-    # Same dbbackup alias as base (django-dbbackup >= 5 reads STORAGES).
-    "dbbackup": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
-        "OPTIONS": {"location": MEDIA_ROOT.parent / "backups"},
-    },
+    # Same env-gated alias as base (local dir unless DBBACKUP_S3_BUCKET set).
+    "dbbackup": _dbbackup_storage(),
 }

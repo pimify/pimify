@@ -128,12 +128,16 @@ Goal: minimal correct PIM domain in `catalog/`.
 
 ---
 
-## Phase 3 — Localization / Channels (Later)
+## Phase 3 — Localization / Channels (Later) — STARTED 2026-10-05 (scoping only; PG deferred per user decision, Litestream deferred, dbbackup stays)
 
-- [ ] Enforce `Value.locale/channel` scoping (only when Channels ship; start product-level + variant-axis only)
-- [ ] `Brand` entity hardening if needed
+- [x] Scoped resolution, single source of truth: `catalog/resolution.py:resolve_scoped_value` (exact -> channel-only -> locale-only -> global; channel wins ties; empty MULTISELECT never wins). Completeness engine refactored onto it (behavior identical, existing math tests pass unchanged)
+- [x] Membership invariant in `BaseAttributeValue.clean()`: channel+locale both set requires locale ∈ channel.locales; either side alone (or neither) always allowed. Rules (`CompletenessRule`) deliberately NOT gated (config chicken-and-egg)
+- [x] Scoped reads: `GET /products/{id}/values/?channel=&locale=` (one winning row per attribute, both params optional); `GET .../media/` gained optional `?channel=&locale=` in-scope filters (global rows always included)
+- [x] `Brand.slug` (unique, auto-filled from name): stable key for future feeds. No backfill needed (empty table). BrandAdmin lists/searches slug. Review fix: `allow_unicode=True` + never-empty nanoid fallback + `-2` disambiguation (non-Latin names no longer collide on `''`; renames never thrash the slug); `catalog/migrations/0005_alter_brand_slug.py`
+- [x] 16 new tests (membership 3, slug 3, resolver 6, endpoints 4); 79/79 suite green
+- [ ] `Brand` entity hardening if needed (logo/description deferred — no consumer yet)
 - [ ] Postgres: DEFERRED indefinitely — SQLite by design (user decision 2026-10-05; Litestream evaluated and likewise deferred, django-dbbackup stays). Revisit only on measured SQLite limits. `DATABASE_URL` stays commented
-- [ ] `dbbackup` to S3, `DBBACKUP_CLEANUP_KEEP` review (config now actually works — STORAGES alias fix 2026-10-05)
+- [x] `dbbackup` to S3 (env-gated, default unchanged): `django-storages==1.14.6 + boto3` added; shared `_dbbackup_storage()` helper (base + production) selects S3 when `DBBACKUP_S3_BUCKET` set (bucket/endpoint/region/prefix from env, creds from AWS env chain — never settings); `.env.example` documents contract. Verified: default resolves filesystem, S3 branch instantiates with correct bucket/endpoint/prefix (no network touched; live-bucket upload is a user-side check). `DBBACKUP_CLEANUP_KEEP=3` retained on review (monthly jobs → 3 months of history)
 - [ ] No ES/Celery/DAM yet — `prefetch_related(values,variants)`, `completeness_cache` is enough
 
 ---

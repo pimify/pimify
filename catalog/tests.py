@@ -96,6 +96,7 @@ class AttributeScopePlacementTest(TestCase):
         self.product = make_product()
         self.locale = Locale.objects.create(code='hi', name='Hindi')
         self.channel = Channel.objects.create(code='web', name='Web')
+        self.channel.locales.add(self.locale)
 
     def test_locale_channel_gated(self):
         attr = make_attr()  # neither localizable nor scoped
@@ -254,3 +255,72 @@ class MultiselectNonEmptyTest(TestCase):
         opt = AttributeOption.objects.create(attribute=attr, code='a', label='A')
         v.options.add(opt)
         v.full_clean()  # passes once an option exists (asserts no raise)
+
+
+class ChannelLocaleMembershipTest(TestCase):
+    def setUp(self):
+        self.product = make_product('MB-001')
+        self.locale = Locale.objects.create(code='ta', name='Tamil')
+        self.channel = Channel.objects.create(code='app', name='App')
+        self.attr = make_attr('desc', AttributeTypes.TEXTAREA,
+                              is_localizable=True, is_channel_scoped=True)
+
+    def _value(self, **kw):
+        return ProductValue(product=self.product, attribute=self.attr, **kw)
+
+    def test_unoffered_locale_rejected(self):
+        with self.assertRaises(ValidationError):
+            self._value(locale=self.locale, channel=self.channel,
+                         value_text='x').full_clean()
+
+    def test_offered_locale_accepted(self):
+        self.channel.locales.add(self.locale)
+        v = self._value(locale=self.locale, channel=self.channel, value_text='x')
+        v.full_clean()
+        v.save()
+
+    def test_single_sided_scopes_always_allowed(self):
+        # Locale-only and channel-only need no membership (nothing to check).
+        self._value(locale=self.locale, value_text='x').full_clean()
+        self._value(channel=self.channel, value_text='x').full_clean()
+        self._value(value_text='x').full_clean()
+
+
+class BrandSlugTest(TestCase):
+    def test_slug_autofills_from_name(self):
+        b = Brand.objects.create(name='Acme Corp')
+        self.assertEqual(b.slug, 'acme-corp')
+
+    def test_explicit_slug_kept(self):
+        b = Brand.objects.create(name='Acme Corp', slug='acme')
+        self.assertEqual(b.slug, 'acme')
+
+    def test_slug_collision_disambiguated(self):
+        Brand.objects.create(name='Acme')
+        b2 = Brand.objects.create(name='ACME')  # same slug, distinct names
+        self.assertEqual(b2.slug, 'acme-2')
+
+    def test_non_latin_names_get_unique_nonempty_slugs(self):
+        # Guarantee under test: never '' (the old collision), never shared.
+        ta = Brand.objects.create(name='டாடா')
+        hi = Brand.objects.create(name='टाटा')
+        self.assertTrue(ta.slug)
+        self.assertTrue(hi.slug)
+        self.assertNotEqual(ta.slug, hi.slug)
+        # Same-script names that slugify identically still disambiguate.
+        ta2 = Brand.objects.create(name='டட')
+        self.assertNotEqual(ta2.slug, ta.slug)
+        self.assertTrue(ta2.slug.startswith(ta.slug))
+
+    def test_unslugable_name_falls_back_to_unique_id(self):
+        b1 = Brand.objects.create(name='---')
+        b2 = Brand.objects.create(name='...')
+        self.assertTrue(b1.slug.startswith('brand-'))
+        self.assertTrue(b2.slug.startswith('brand-'))
+        self.assertNotEqual(b1.slug, b2.slug)
+
+    def test_rename_does_not_thrash_slug(self):
+        b = Brand.objects.create(name='Acme')
+        b.name = 'Acme Ltd'
+        b.save()
+        self.assertEqual(Brand.objects.get(pk=b.pk).slug, 'acme')

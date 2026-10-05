@@ -304,3 +304,59 @@ class OrganizationInversionTest(TestCase):
         assert key.organization_id is None
         # authenticate() only filters api_key + is_active (unchanged).
         assert header_key.authenticate(None, key.api_key) is not None
+
+
+class ScopedReadsTest(TestCase):
+    """Phase 3: resolved values endpoint + media scope filters."""
+
+    def setUp(self):
+        self.client = TestClient(router)
+        key = APIKey.objects.create(name='s')
+        self.h = {'X-API-Key': key.api_key}
+        self.locale = Locale.objects.create(code='de', name='German')
+        self.channel = Channel.objects.create(code='web', name='Web')
+        self.channel.locales.add(self.locale)
+        self.attr = Attribute.objects.create(
+            code='t', label='T', type=AttributeTypes.TEXT,
+            is_localizable=True, is_channel_scoped=True)
+        self.product = Product.objects.create(
+            sku='S-001', name='S', list_price=Decimal('1'))
+        ProductValue.objects.create(
+            product=self.product, attribute=self.attr, value_text='global')
+        ProductMedia.objects.create(product=self.product, role=MediaRoles.GALLERY, file='')
+        ch_media = ProductMedia.objects.create(
+            product=self.product, role=MediaRoles.GALLERY, file='',
+            channel=self.channel)
+        self.ch_media_id = ch_media.id
+
+    def test_resolved_values_exact_wins(self):
+        ProductValue.objects.create(
+            product=self.product, attribute=self.attr, channel=self.channel,
+            locale=self.locale, value_text='exact')
+        rows = self.client.get(
+            f'/products/{self.product.id}/values/?channel=web&locale=de',
+            headers=self.h).json()
+        assert [(r['attribute'], r['value']) for r in rows] == [('t', 'exact')]
+
+    def test_resolved_values_falls_back_to_global(self):
+        rows = self.client.get(
+            f'/products/{self.product.id}/values/?channel=web&locale=de',
+            headers=self.h).json()
+        assert [(r['attribute'], r['value']) for r in rows] == [('t', 'global')]
+
+    def test_resolved_values_missing_product_404(self):
+        r = self.client.get('/products/zzz/values/?channel=web&locale=de', headers=self.h)
+        assert r.status_code == 404
+        assert set(r.json()) == {'error'}
+
+    def test_media_scope_filters(self):
+        base = f'/products/{self.product.id}/media/'
+        assert len(self.client.get(base, headers=self.h).json()) == 2
+        scoped = self.client.get(base + '?channel=web', headers=self.h).json()
+        assert len(scoped) == 2  # global + web-scoped
+        other = self.client.get(base + '?channel=nope', headers=self.h).json()
+        assert len(other) == 1  # only the global row survives
+        loc_only = self.client.get(base + '?locale=de', headers=self.h).json()
+        # Both rows: global matches everything, and the web-scoped row is
+        # locale-generic (locale NULL matches any requested locale).
+        assert len(loc_only) == 2

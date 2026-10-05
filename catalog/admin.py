@@ -176,8 +176,8 @@ class ChannelAdmin(ModelAdmin, ImportExportModelAdmin):
 @admin.register(Brand)
 class BrandAdmin(ModelAdmin, ImportExportModelAdmin):
     compressed_fields = True
-    list_display = ('name',)
-    search_fields = ['name']
+    list_display = ('name', 'slug')
+    search_fields = ['name', 'slug']
     import_form_class = ImportForm
     export_form_class = SelectableFieldsExportForm
 

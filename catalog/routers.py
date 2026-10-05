@@ -35,6 +35,7 @@ from .models import (
 from .schemas import (
     AssociationSchema,
     AttributeSchema,
+    AttributeValueSchema,
     CategoryTreeSchema,
     ChannelSchema,
     CompletenessSchema,
@@ -45,8 +46,8 @@ from .schemas import (
     ProductDetailSchema,
     ProductListSchema,
     VariantSchema,
-    resolve_attribute_value,
 )
+from .resolution import resolve_scoped_value
 
 router = Router()
 
@@ -261,19 +262,57 @@ def retrieve_variant(request, sku: str):
 
 @router.get("/products/{id}/media/", auth=header_key,
             response={200: List[MediaSchema], 404: Error}, tags=["Media"])
-def list_product_media(request, id: str):
+def list_product_media(
+    request, id: str, channel: Optional[str] = None, locale: Optional[str] = None,
+):
     """Product media feed: product-owned rows plus variant rows (variant sku set).
 
-    Supersedes legacy /public/products/{id}/images/ (removed in 1.4 cutover).
+    Optional channel/locale narrow to in-scope rows (global rows always
+    included). Supersedes legacy /public/products/{id}/images/.
     Unpaginated (see variants endpoint note on @paginate + error statuses).
     """
     product = or_404(
         lambda: get_object_or_404(Product, id=id), f'Product {id} not found.')
     if isinstance(product, Status):
         return product
-    return (ProductMedia.objects
-            .filter(Q(product=product) | Q(variant__product=product))
-            .select_related('variant', 'channel', 'locale').order_by('sort'))
+    media = (ProductMedia.objects
+             .filter(Q(product=product) | Q(variant__product=product))
+             .select_related('variant', 'channel', 'locale').order_by('sort'))
+    if channel is not None:
+        media = media.filter(Q(channel__isnull=True) | Q(channel_id=channel))
+    if locale is not None:
+        media = media.filter(Q(locale__isnull=True) | Q(locale_id=locale))
+    return media
+
+
+@router.get("/products/{id}/values/", auth=header_key,
+            response={200: List[AttributeValueSchema], 404: Error}, tags=["Product"])
+def list_resolved_values(
+    request, id: str, channel: Optional[str] = None, locale: Optional[str] = None,
+):
+    """One winning value row per attribute for a (channel, locale) scope.
+
+    Same fallback chain as the completeness engine (exact -> channel-only ->
+    locale-only -> global); unset rows never win. Unpaginated: one row per
+    attribute by construction.
+    """
+    product = or_404(
+        lambda: get_object_or_404(Product, id=id), f'Product {id} not found.')
+    if isinstance(product, Status):
+        return product
+    values = list(ProductValue.objects.filter(product=product)
+                  .select_related('attribute', 'option', 'channel', 'locale')
+                  .prefetch_related('options'))
+    by_attr = {}
+    for v in values:
+        by_attr.setdefault(v.attribute.code, (v.attribute, []))[1].append(v)
+    winners = []
+    for code in sorted(by_attr):
+        attr, rows = by_attr[code]
+        won = resolve_scoped_value(rows, attr, channel, locale)
+        if won is not None:
+            winners.append(won)
+    return winners
 
 
 @router.get("/products/{id}/relations/", auth=header_key,
@@ -297,14 +336,6 @@ def list_product_relations(request, id: str, type: Optional[str] = None):
 
 
 # Completeness ------------------------------------------------------------------
-
-def _value_present(value) -> bool:
-    """A value counts toward completeness only when it carries real data.
-
-    Empty MULTISELECT (no options) counts as UNSET — see 2.1 audit BUG 2.
-    """
-    resolved = resolve_attribute_value(value)
-    return resolved not in (None, '', [])
 
 
 @router.get("/products/{id}/completeness/", auth=header_key,
@@ -342,16 +373,10 @@ def product_completeness(request, id: str, channel: str, locale: str):
     values = list(ProductValue.objects.filter(product=product)
                   .select_related('attribute', 'option', 'channel', 'locale')
                   .prefetch_related('options'))
-    missing = []
-    for attr in required:
-        satisfied = any(
-            (v.channel_id is None or v.channel_id == channel)
-            and (v.locale_id is None or v.locale_id == locale)
-            and _value_present(v)
-            for v in values if v.attribute_id == attr.pk
-        )
-        if not satisfied:
-            missing.append(attr.code)
+    missing = [
+        attr.code for attr in required
+        if resolve_scoped_value(values, attr, channel, locale) is None
+    ]
 
     total = len(required)
     percent = round((total - len(missing)) / total * 100, 2) if total else 100.0

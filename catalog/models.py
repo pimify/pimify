@@ -17,6 +17,7 @@ from django.db import models
 from django.db.models import Q
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.utils.text import slugify
 from djmoney.models.fields import MoneyField
 from simple_history.models import HistoricalRecords
 
@@ -57,9 +58,36 @@ class Brand(models.Model):
 
     id = NanoIDField(primary_key=True)
     name = models.CharField(max_length=100, unique=True)
+    slug = models.SlugField(max_length=100, unique=True, blank=True,
+                            allow_unicode=True,
+                            help_text="Stable key for feeds/URLs. Auto-filled from name.")
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = self._unique_slug()
+        super().save(*args, **kwargs)
+
+    def _unique_slug(self):
+        """Slug candidate that can never collide or come out empty.
+
+        allow_unicode keeps non-Latin names (hi/ta/...) as real slugs
+        instead of '' (ASCII slugify strips them, and '' would collide on
+        the unique constraint). A nanoid fallback covers names with no
+        slugable characters at all; a numeric suffix disambiguates
+        same-slug names ('Acme' vs 'ACME'). Only ever fills an empty
+        slug, so renames never thrash feed keys.
+        """
+        max_len = self._meta.get_field('slug').max_length
+        base = slugify(self.name, allow_unicode=True) or f"brand-{self.id}"
+        slug, n = base[:max_len], 2
+        while (Brand.objects.filter(slug=slug).exclude(pk=self.pk).exists()):
+            suffix = f"-{n}"
+            slug = base[:max_len - len(suffix)] + suffix
+            n += 1
+        return slug
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +336,12 @@ class BaseAttributeValue(models.Model):
             raise ValidationError({'locale': f"'{attr.code}' is not localizable."})
         if self.channel_id is not None and not attr.is_channel_scoped:
             raise ValidationError({'channel': f"'{attr.code}' is not channel-scoped."})
+        # Membership: a value scoped to both must name a locale the channel
+        # actually offers. Either side alone (or neither) is always allowed.
+        if self.locale_id is not None and self.channel_id is not None:
+            if not self.channel.locales.filter(pk=self.locale_id).exists():
+                raise ValidationError(
+                    {'locale': f"'{self.locale_id}' is not offered on channel '{self.channel_id}'."})
 
         column = self._TYPE_COLUMN[attr.type]
 
