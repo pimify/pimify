@@ -69,4 +69,9 @@ STORAGES = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
         "LOCATION": MEDIA_ROOT,  # Ensure MEDIA_ROOT is defined above
     },
+    # Same dbbackup alias as base (django-dbbackup >= 5 reads STORAGES).
+    "dbbackup": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {"location": MEDIA_ROOT.parent / "backups"},
+    },
 }

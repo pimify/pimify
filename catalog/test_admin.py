@@ -91,3 +91,40 @@ class DashboardKpiTest(TestCase):
         # setUp product has variant-only media, DIRECT has product media,
         # BARE has none -> only BARE counts. Old query returned 2.
         self.assertEqual(missing['metric'], 1)
+
+
+class PrivateMirrorHttpTest(TestCase):
+    """Phase 1.4: private routers serve the read-only mirrors (same tables)."""
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        self.client = Client(HTTP_USER_AGENT='private-mirror')
+        User.objects.create_superuser('staff', 's@x.com', 'pw')
+        # Real form login (see CatalogAdminSmokeTest: login() helpers break
+        # dj-login-history's post_login signal).
+        self.client.post(
+            '/dashboard/login/', {'username': 'staff', 'password': 'pw'}, follow=True)
+        from api.models import Product as ApiProduct
+        from django.db import connection
+        self.wh_id = 'wh-priv-001'
+        with connection.cursor() as c:
+            # Raw SQL: no managed Warehouse/Stock models exist post-retirement.
+            c.execute(
+                'INSERT INTO "Warehouses" (id, name, address) VALUES (%s, %s, %s)',
+                [self.wh_id, 'W', 'a'],
+            )
+        prod = ApiProduct.objects.create(name='P', sku='PRIV-001', price=Decimal('3'))
+        with connection.cursor() as c:
+            c.execute(
+                'INSERT INTO "Stocks" (id, product_id, quantity, warehouse_id)'
+                ' VALUES (%s, %s, %s, %s)',
+                ['st-priv-001', prod.pk, 2, self.wh_id],
+            )
+
+    def test_private_lists_read_mirror_tables(self):
+        for path in ('/api/v1/private/warehouses/', '/api/v1/private/stocks/',
+                     '/api/v1/private/suppliers/', '/api/v1/private/product-supplier/'):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 200, path)
+        stocks = self.client.get('/api/v1/private/stocks/').json()
+        self.assertTrue(any(s['quantity'] == 2 for s in stocks['items']))

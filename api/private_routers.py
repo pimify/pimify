@@ -10,8 +10,10 @@ from ninja import Router, Query
 from ninja.security import django_auth
 from ninja.pagination import paginate, PageNumberPagination
 
-# Local imports
-from .models import Supplier, Warehouse, Stock, ProductSupplier
+# Local imports — Phase 1.4 cutover: read-only unmanaged mirrors sharing the
+# api tables (same columns, so response schemas resolve unchanged).
+from inventory.models import Stock, Warehouse
+from procurement.models import ProductSupplier, Supplier
 from .schemas import (
     SupplierListSchema,
     SupplierInfoSchema,

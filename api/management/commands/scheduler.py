@@ -4,18 +4,8 @@ from apscheduler.triggers.cron import CronTrigger
 from django_apscheduler.jobstores import DjangoJobStore
 from django_apscheduler.models import DjangoJobExecution
 from django_apscheduler import util
-from djmoney.contrib.exchange.backends import OpenExchangeRatesBackend
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
-
-# Function to update exchange rates
-def sync_exchange_rates():
-    try:
-        backend = OpenExchangeRatesBackend()  # Initialize the exchange rates backend
-        backend.update_rates()  # Update rates from OpenExchangeRates
-        print("Exchange rates updated successfully.")
-    except Exception as e:
-        print(f"Failed to update exchange rates: {e}")
 
 # Function to backup db
 def backup_db_every_month():
@@ -42,16 +32,6 @@ def delete_old_job_executions(max_age=7):
 def start():
     scheduler = BackgroundScheduler()  # Create a background scheduler
     scheduler.add_jobstore(DjangoJobStore(), "default")  # Use Django's database as the job store
-
-    # Add a job to update exchange rates every hour
-    scheduler.add_job(
-        sync_exchange_rates,
-        'interval',
-        hours=1,
-        jobstore='default',
-        id="update_exchange_rates",
-        replace_existing=True,
-    )
 
     # Add a job to backup db every month
     scheduler.add_job(
@@ -84,7 +64,6 @@ def start():
     try:
         scheduler.start()  # Start the scheduler
         print("Scheduler started successfully.")
-        sync_exchange_rates()  # Perform an initial sync of exchange rates
     except Exception as e:
         print(f"Failed to start scheduler: {e}")
 

@@ -8,9 +8,6 @@ from django.templatetags.static import static
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Open exchange rate app id (empty disables exchange-rate jobs)
-OPEN_EXCHANGE_RATES_APP_ID = config("OPEN_EXCHANGE_RATES_APP_ID", default="")
-
 # Define application categories
 LOCAL_APPS = [
     'api',
@@ -25,7 +22,6 @@ THIRD_PARTY_APPS = [
     'image_uploader_widget',
     'login_history',
     'djmoney',
-    'djmoney.contrib.exchange',
     'django_apscheduler',
     'dbbackup',
     'simple_history',  # Phase 2: Product/Variant/Value audit trail (Unfold-native)
@@ -51,12 +47,6 @@ INSTALLED_APPS = [
     *THIRD_PARTY_APPS,
     *LOCAL_APPS,
 ]
-
-# Django Money backend config
-DJANGO_MONEY_RATES = {
-    'DEFAULT_BACKEND': 'djmoney.contrib.exchange.backends.OpenExchangeRatesBackend',
-    'OPEN_EXCHANGE_RATES_URL': "https://openexchangerates.org/api/latest.json",
-}
 
 # Middleware configuration
 MIDDLEWARE = [
@@ -145,6 +135,12 @@ STORAGES = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
         "LOCATION": MEDIA_ROOT,
     },
+    # django-dbbackup >= 5 reads STORAGES["dbbackup"] (the old
+    # DBBACKUP_STORAGE[_OPTIONS] settings raise RuntimeError there).
+    "dbbackup": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {"location": BASE_DIR / "../backups"},
+    },
 }
 
 # STATICFILES_STORAGE = "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"
@@ -156,8 +152,6 @@ def db_backup_filename(databasename, servername, datetime, extension, content_ty
 def media_backup_filename(databasename, servername, datetime, extension, content_type):
     return f"media_{datetime}.{extension}"
 
-DBBACKUP_STORAGE = 'django.core.files.storage.FileSystemStorage'
-DBBACKUP_STORAGE_OPTIONS = {'location': BASE_DIR / '../backups'}
 DBBACKUP_TMP_FILE_MAX_SIZE = 10*1024*1024
 DBBACKUP_CLEANUP_KEEP = config("DBBACKUP_CLEANUP_KEEP", default=3, cast=int)
 DBBACKUP_CLEANUP_KEEP_MEDIA = config("DBBACKUP_CLEANUP_KEEP_MEDIA", default=3, cast=int)

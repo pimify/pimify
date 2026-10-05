@@ -28,18 +28,34 @@ from image_uploader_widget.widgets import ImageUploaderWidget
 from login_history.models import LoginHistory
 from django_apscheduler.models import DjangoJob, DjangoJobExecution
 
-# Local imports
+# Local imports — NOTE (Phase 1.4 cutover, option A): Supplier,
+# ProductSupplier, Warehouse and Stock were retired from api state (their
+# tables live on via unmanaged mirrors). Product/Category/ProductImage stay
+# as read-only legacy (catalog owns the write surface).
 from .models import (
     Product,
     Category,
-    Supplier,
-    ProductSupplier,
     ProductImage,
-    Warehouse,
-    Stock,
     Organization,
     APIKey
 )
+
+
+class LegacyReadOnlyMixin:
+    """Makes a legacy api ModelAdmin view-only: the catalog app owns writes.
+
+    Add is blocked, delete is blocked, and every field renders read-only, so
+    the change form can display rows but never mutate them.
+    """
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_readonly_fields(self, request, obj=None):
+        return [f.name for f in self.model._meta.fields]
 
 # Unregister default admin models to customize them
 admin.site.unregister(User)
@@ -92,8 +108,8 @@ class GroupAdmin(BaseGroupAdmin, ModelAdmin):
 
 
 @admin.register(Product)
-class ProductAdmin(ModelAdmin, ImportExportModelAdmin):
-    """Admin interface for managing products with import/export functionality."""
+class ProductAdmin(LegacyReadOnlyMixin, ModelAdmin, ImportExportModelAdmin):
+    """Legacy product admin — READ-ONLY (catalog owns the write surface)."""
     compressed_fields = True
     warn_unsaved_form = True
     list_filter_submit = True
@@ -118,8 +134,8 @@ class ProductAdmin(ModelAdmin, ImportExportModelAdmin):
 
 
 @admin.register(Category)
-class CategoryAdmin(ModelAdmin, ImportExportModelAdmin):
-    """Admin interface for managing product categories."""
+class CategoryAdmin(LegacyReadOnlyMixin, ModelAdmin, ImportExportModelAdmin):
+    """Legacy category admin — READ-ONLY (catalog owns the write surface)."""
     compressed_fields = True
     warn_unsaved_form = True
     list_filter_submit = True
@@ -135,47 +151,9 @@ class CategoryAdmin(ModelAdmin, ImportExportModelAdmin):
     export_form_class = SelectableFieldsExportForm
 
 
-@admin.register(Supplier)
-class SupplierAdmin(ModelAdmin, ImportExportModelAdmin):
-    """Admin interface for managing suppliers."""
-    compressed_fields = True
-    warn_unsaved_form = True
-    list_filter_submit = True
-    list_display = ('name', 'email', 'phone')
-    list_filter = (('name', ChoicesDropdownFilter),)
-    search_fields = ['name', 'email']
-
-    # Import/Export configuration
-    import_form_class = ImportForm
-    export_form_class = SelectableFieldsExportForm
-
-    # Use WYSIWYG editor for text fields
-    formfield_overrides = {
-        models.TextField: {"widget": WysiwygWidget}
-    }
-
-
-@admin.register(ProductSupplier)
-class ProductSupplierAdmin(ModelAdmin, ImportExportModelAdmin):
-    """Admin interface for managing product-supplier relationships."""
-    compressed_fields = True
-    warn_unsaved_form = True
-    list_filter_submit = True
-    list_display = ('product', 'supplier', 'cost_price', 'lead_time')
-    list_filter = (
-        ('product', ChoicesDropdownFilter),
-        ('supplier', ChoicesDropdownFilter)
-    )
-    search_fields = ['product', 'supplier']
-
-    # Import/Export configuration
-    import_form_class = ImportForm
-    export_form_class = SelectableFieldsExportForm
-
-
 @admin.register(ProductImage)
-class ProductImageAdmin(ModelAdmin, ImportExportModelAdmin):
-    """Admin interface for managing product images."""
+class ProductImageAdmin(LegacyReadOnlyMixin, ModelAdmin, ImportExportModelAdmin):
+    """Legacy product-image admin — READ-ONLY (catalog media owns writes)."""
     compressed_fields = True
     warn_unsaved_form = True
     list_filter_submit = True
@@ -193,48 +171,13 @@ class ProductImageAdmin(ModelAdmin, ImportExportModelAdmin):
     }
 
 
-@admin.register(Warehouse)
-class WarehouseAdmin(ModelAdmin, ImportExportModelAdmin):
-    """Admin interface for managing warehouses."""
-    compressed_fields = True
-    warn_unsaved_form = True
-    list_filter_submit = True
-    list_display = ('name',)
-    list_filter = (('name', ChoicesDropdownFilter),)
-    search_fields = ['name']
-
-    # Import/Export configuration
-    import_form_class = ImportForm
-    export_form_class = SelectableFieldsExportForm
-
-    # Use WYSIWYG editor for text fields
-    formfield_overrides = {
-        models.TextField: {"widget": WysiwygWidget}
-    }
-
-
-@admin.register(Stock)
-class StockAdmin(ModelAdmin, ImportExportModelAdmin):
-    """Admin interface for managing product stock levels."""
-    compressed_fields = True
-    warn_unsaved_form = True
-    list_filter_submit = True
-    list_display = ('product', 'quantity', 'warehouse')
-    list_filter = (('product', ChoicesDropdownFilter),)
-    search_fields = ['product']
-
-    # Import/Export configuration
-    import_form_class = ImportForm
-    export_form_class = SelectableFieldsExportForm
-
-
 @admin.register(APIKey)
 class APIKeyAdmin(ModelAdmin):
     """Admin interface for managing API keys."""
     compressed_fields = True
     warn_unsaved_form = True
-    list_display = ('name', 'api_key', 'is_active', 'created_at', 'updated_at')
-    list_filter = (('name'), ('is_active'))
+    list_display = ('name', 'api_key', 'organization', 'is_active', 'created_at', 'updated_at')
+    list_filter = (('name'), ('is_active'), ('organization'))
     search_fields = ['name']
 
 
@@ -243,9 +186,13 @@ class OrganizationAdmin(ModelAdmin):
     """Admin interface for managing organization details."""
     compressed_fields = True
     warn_unsaved_form = True
-    list_display = ('name', 'email', 'website', 'api_keys', 'created_at', 'updated_at')
+    list_display = ('name', 'email', 'website', 'key_count', 'created_at', 'updated_at')
     list_filter = (('name'),)
     search_fields = ['name']
+
+    @admin.display(description='API keys')
+    def key_count(self, obj):
+        return obj.api_keys.count()
 
     # Use WYSIWYG editor for text fields
     formfield_overrides = {

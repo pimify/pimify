@@ -51,13 +51,15 @@ from .schemas import (
 router = Router()
 
 
-def _or_404(make, error):
+def or_404(make, error):
     """get_object_or_404 that honors the declared 404: Error envelope.
 
     Bare get_object_or_404 raises into Ninja's default handler, which renders
     {"detail": ...} — contradicting every endpoint's documented Error shape.
     Returns Status (not a plain tuple) because @paginate only understands
     Status for non-200 returns — plain tuples get validated as 200 payloads.
+
+    Public for reuse by api/public_routers (cutover endpoints share the contract).
     """
     try:
         return make()
@@ -136,7 +138,7 @@ def list_families(request):
             response={200: FamilyDetailSchema, 404: Error}, tags=["Family"])
 def retrieve_family(request, code: str):
     """Family detail with group + attribute codes."""
-    return _or_404(
+    return or_404(
         lambda: get_object_or_404(
             AttributeSet.objects.prefetch_related('groups', 'attributes'), code=code),
         f'Family {code} not found.')
@@ -154,7 +156,7 @@ def list_attributes(request):
             response={200: AttributeSchema, 404: Error}, tags=["Attribute"])
 def retrieve_attribute(request, code: str):
     """Attribute definition with its options."""
-    return _or_404(
+    return or_404(
         lambda: get_object_or_404(
             Attribute.objects.prefetch_related('options'), code=code),
         f'Attribute {code} not found.')
@@ -192,13 +194,15 @@ class CatalogProductFilter(Schema):
     is_active: Optional[bool] = None
     search: Optional[str] = None
     family: Optional[str] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
 
 
 @router.get("/products/", auth=header_key,
             response={200: List[ProductListSchema]}, tags=["Product"])
 @paginate(PageNumberPagination, page_size=20)
 def list_catalog_products(request, filters: CatalogProductFilter = Query(...)):
-    """Paginated catalog products with optional search/active/family filters."""
+    """Paginated catalog products with optional search/active/family/price filters."""
     products = Product.objects.select_related('family', 'brand').order_by('sku')
     if filters.is_active is not None:
         products = products.filter(is_active=filters.is_active)
@@ -210,6 +214,12 @@ def list_catalog_products(request, filters: CatalogProductFilter = Query(...)):
             | Q(sku__icontains=filters.search)
             | Q(description__icontains=filters.search)
         )
+    # MoneyField amount column is `list_price`: plain numeric comparison is
+    # correct (same verified djmoney behavior as the legacy price filter).
+    if filters.min_price is not None:
+        products = products.filter(list_price__gte=filters.min_price)
+    if filters.max_price is not None:
+        products = products.filter(list_price__lte=filters.max_price)
     return products
 
 
@@ -217,7 +227,7 @@ def list_catalog_products(request, filters: CatalogProductFilter = Query(...)):
             response={200: ProductDetailSchema, 404: Error}, tags=["Product"])
 def retrieve_catalog_product(request, id: str):
     """Catalog product detail: categories, values, variants (+values), media."""
-    return _or_404(
+    return or_404(
         lambda: get_object_or_404(_product_detail_qs(), id=id),
         f'Product {id} not found.')
 
@@ -231,7 +241,7 @@ def list_product_variants(request, id: str):
     (it paginates the error payload as if it were the 200 list). Variant
     collections per product are small; revisit if that changes.
     """
-    product = _or_404(
+    product = or_404(
         lambda: get_object_or_404(Product, id=id), f'Product {id} not found.')
     if isinstance(product, Status):
         return product
@@ -243,7 +253,7 @@ def list_product_variants(request, id: str):
             response={200: VariantSchema, 404: Error}, tags=["Variant"])
 def retrieve_variant(request, sku: str):
     """Single variant by SKU with its axis values."""
-    return _or_404(
+    return or_404(
         lambda: get_object_or_404(
             ProductVariant.objects.prefetch_related(_variant_values()), sku=sku),
         f'Variant {sku} not found.')
@@ -257,7 +267,7 @@ def list_product_media(request, id: str):
     Supersedes legacy /public/products/{id}/images/ (removed in 1.4 cutover).
     Unpaginated (see variants endpoint note on @paginate + error statuses).
     """
-    product = _or_404(
+    product = or_404(
         lambda: get_object_or_404(Product, id=id), f'Product {id} not found.')
     if isinstance(product, Status):
         return product
@@ -275,7 +285,7 @@ def list_product_relations(request, id: str, type: Optional[str] = None):
     """
     if type is not None and type not in AssociationTypes.values:
         return 400, {'error': f'Unknown type {type!r}. Valid: {sorted(AssociationTypes.values)}.'}
-    product = _or_404(
+    product = or_404(
         lambda: get_object_or_404(Product, id=id), f'Product {id} not found.')
     if isinstance(product, Status):
         return product
@@ -305,17 +315,17 @@ def product_completeness(request, id: str, channel: str, locale: str):
     Side effect: refreshes Product.completeness_cache[channel] via queryset
     update (no history row, no updated_at bump). First and only writer.
     """
-    product = _or_404(
+    product = or_404(
         lambda: get_object_or_404(Product.objects.select_related('family'), id=id),
         f'Product {id} not found.')
     if isinstance(product, Status):
         return product
-    channel_obj = _or_404(
+    channel_obj = or_404(
         lambda: get_object_or_404(Channel, code=channel),
         f'Channel {channel} not found.')
     if isinstance(channel_obj, Status):
         return channel_obj
-    locale_obj = _or_404(
+    locale_obj = or_404(
         lambda: get_object_or_404(Locale, code=locale),
         f'Locale {locale} not found.')
     if isinstance(locale_obj, Status):

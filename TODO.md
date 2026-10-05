@@ -56,17 +56,24 @@ Goal: remove WMS/Procurement/pricing-engine from `api/`, deprecate safely.
 - [x] FIX (audit 2026-10-02): post_delete receiver recomputes stock_quantity (old override never handled deletes → stale totals proven: 5 stayed 5); cascade product-delete guarded via product_id lookup + None check (proven: no crash, rows gone). Delete-to-zero covered by tests
 
 ### 1.3 Decouple writes
-- [ ] Move `Stock.save()` aggregate to `inventory/signals.py:update_product_stock_cache` -> transitional `Product.stock_quantity_cached`
-- [ ] Change `Product.stock_quantity` to read-only `@property` in serializers/admin (stop direct writes)
+- [x] Stock aggregate lives in `inventory/signals.py` (post_save + post_delete); transitional `stock_quantity_cached` deemed unnecessary — the signal already owns the single write path and `stock_quantity` dies with the api model drop below. Original item superseded
+- [ ] Change `Product.stock_quantity` to read-only `@property` — DEFERRED to model-drop cleanup (property + column can't coexist; the column goes with the api model)
 - [x] SUPERSEDED by 2.1 backfill: `catalog.Product.list_price` copied from `api.price` once (no dual-write needed); `api.price` stays untouched until the 1.4 drop. Original item: ~~Freeze price: add `catalog.Product.list_price = MoneyField` (copy from `price`), dual-write in `save()`, `RunPython` backfill~~
-- [ ] Remove `convert_money` usage; keep raw amount. Remove `djmoney.contrib.exchange` from `INSTALLED_APPS` only after routers removed
+- [x] Exchange removed, not just deprecated: endpoints deleted (404; Sunset headers still attach via middleware prefix match), `convert_money`/`Rate` gone, `djmoney.contrib.exchange` removed from INSTALLED_APPS (tables dropped via `migrate exchange zero` first), `DJANGO_MONEY_RATES` + `OPEN_EXCHANGE_RATES_APP_ID` setting + `.env` keys deleted, scheduler job + initial sync deleted, dead schemas + stale urls.py block cleaned
 - [x] Fix `public_routers.py:list_products`: `search` no longer discards `is_active`/price filters and no longer forces `is_active=True`; `0` price bounds now respected (`is not None`). CORRECTION to plan: `price__gte=<float>` was already correct — amount column IS `price`, no `price_amount` column exists; verified empirically on djmoney 3.6.1 (only the search-reset + falsy-zero parts were real bugs). Live-verified `?search=smoke` returns 200 with correct row
 
-### 1.4 Cutover + Drop
-- [ ] Point Ninja public routers to `catalog` querysets; private WMS routers to `inventory/procurement`
-- [ ] One green release with both paths live + verified `dbbackup`
-- [ ] Delete from `api/models.py`: `stock_quantity` column, `Warehouse/Stock/Supplier/ProductSupplier`, exchange routers/job (`scheduler.sync_exchange_rates`)
-- [ ] Delete exchange scheduler job, keep `backup_db/media + delete_old_job_executions`
+### 1.4 Cutover + Drop — DONE 2026-10-05, uncommitted (routers + exchange + org + model drop; green-release ship = next)
+- [x] Pre-migration `dbbackup --clean` succeeded (966KB). FIX found en route: dbbackup 5.x hard-fails on legacy `DBBACKUP_STORAGE[_OPTIONS]` settings — moved to `STORAGES["dbbackup"]` alias in base + production (this also un-breaks the scheduler backup jobs, which were silently failing)
+- [x] Public routers serve catalog: products list (same query params incl. price bounds, now on `list_price`; +sku in search), detail (no `stock_quantity`), images → media feed (incl. variant rows), categories (catalog, ordered) — legacy api product/category models unread by these paths. Live-verified SMOKE-001 with brand/family fields
+- [x] Private routers serve read-only mirrors (`inventory`/`procurement` imports); schemas resolve unchanged (same columns). HTTP-verified via staff session: all four lists 200 with real rows
+- [x] `catalog` filter gained `min_price`/`max_price` for `/public/` parity (same verified djmoney amount semantics)
+- [x] Catalog `_or_404` promoted to public `or_404`, shared by cutover endpoints (uniform `{"error"}` envelope). Gotcha respected: paginated `categories/{id}/products` keeps bare get_object_or_404 + no declared 404 (proven Phase 2.2: @paginate cannot return non-200)
+- [x] Pre-migration `dbbackup --clean` succeeded (966KB). FIX found en route: dbbackup 5.x hard-fails on legacy `DBBACKUP_STORAGE[_OPTIONS]` settings — moved to `STORAGES["dbbackup"]` alias in base + production (this also un-breaks the scheduler backup jobs, which were silently failing)
+- [x] `migrate exchange zero` before app removal (no orphan tables); `migrate` clean after; `makemigrations --check` clean
+- [x] Dropped `Warehouse/Stock/Supplier/ProductSupplier` (+ `stock_quantity` column) from `api/models.py` via option (a): `api.0003` wraps the four DeleteModels in SeparateDatabaseAndState (empty database_operations — tables + data intact, verified identical row counts), `stock_quantity` dropped for real (orphaned: nothing read/wrote it). Mirrors keep reading; legacy Product/Category/ProductImage admins made view-only (LegacyReadOnlyMixin: no add/delete, all fields readonly) so no silent API divergence
+- [x] With the drop: deleted `inventory/signals.py` (aggregate has no writer; ImportError risk eliminated), removed 4 WMS admins + dead schemas (`ProductInfoSchema`, `ProductImageSchema`), dropped dead exchange middleware prefixes, deleted unused `Field`/`datetime` imports. Retirement guard test fails if the models ever return
+- [x] Tests rewritten for the post-retirement world (raw-SQL table seeding — no managed writer exists by design): 63/63 green (removed 6 signal tests for deleted behavior, added retirement + table-survival proofs)
+- [ ] Green-release gate: this change IS the dual-path release (legacy + catalog paths live, backup verified). Ship it before any further drops
 - [x] Fix `scheduler.py` missing `from django.core.management import call_command` — DONE in Phase 0
 - [x] Fix `base.py:DATABASES OPTIONS` duplicate `init_command` key — DONE in Phase 0 (merged; WAL was silently dropped)
 
@@ -93,7 +100,7 @@ Goal: minimal correct PIM domain in `catalog/`.
 - [x] FIX (audit 2026-10-02): single global main + single main per channel, separately for product- and variant-owned media (4 partial uniques; NULL scoping deliberate: variant rows invisible to product constraints and vice versa). Decision recorded: per-channel mains allowed, duplicates within a scope are not
 - [x] FIX (audit 2026-10-02): saved-but-empty MULTISELECT now fails `full_clean()` (creation-time still unchecked — M2M needs a pk; completeness engine must also treat empty as unset, see 2.2)
 - [x] Cleanup: audit probe rows removed from dev DB (AUD*/AUDIT-* products, c1/c2, reference rows + history orphans); SMOKE-001 fixture kept. Lesson re-proven: new uniqueness migrations fail on violating rows — resolve data BEFORE migrate, not after
-- [ ] Invert `Organization.api_keys FK` -> `APIKey.organization FK` — DEFERRED to cutover pass (auth-infra, not catalog; 1 key + 0 orgs, needs api migration + admin edit; group with router cutover)
+- [x] Org/APIKey inversion DONE 2026-10-05 with cutover: `APIKey.organization FK null SET_NULL related api_keys`; `Organization.api_keys` removed; migration `api.0002` applied, all keys intact (NULL org); admins updated (key shows org, org shows key count); tested both directions + loose-key auth
 
 ### 2.2 API (Ninja, read-first, paginated 20, X-API-Key public / django_auth write) — DONE 2026-10-02, uncommitted
 - [x] New `catalog/` router (`catalog/routers.py` + `catalog/schemas.py`, mounted in `api/main.py`): legacy `/public/` + `/private/` untouched until 1.4 cutover. Shared `api/auth.py:header_key` (extracted from public_routers, no behavior change)
@@ -125,8 +132,8 @@ Goal: minimal correct PIM domain in `catalog/`.
 
 - [ ] Enforce `Value.locale/channel` scoping (only when Channels ship; start product-level + variant-axis only)
 - [ ] `Brand` entity hardening if needed
-- [ ] Switch SQLite -> Postgres (`JSONB + GinIndex(value_json)`), `DATABASE_URL` in `.env`, zero code change to hybrid values
-- [ ] `dbbackup` to S3, `DBBACKUP_CLEANUP_KEEP` review
+- [ ] Postgres: DEFERRED indefinitely — SQLite by design (user decision 2026-10-05; Litestream evaluated and likewise deferred, django-dbbackup stays). Revisit only on measured SQLite limits. `DATABASE_URL` stays commented
+- [ ] `dbbackup` to S3, `DBBACKUP_CLEANUP_KEEP` review (config now actually works — STORAGES alias fix 2026-10-05)
 - [ ] No ES/Celery/DAM yet — `prefetch_related(values,variants)`, `completeness_cache` is enough
 
 ---

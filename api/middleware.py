@@ -7,13 +7,13 @@ once consumers migrate. See TODO.md Phase 1.
 
 # Path prefixes (after domain) of deprecated endpoints. Matched with
 # str.startswith, so both list and detail URLs are covered.
+# NOTE: exchange-rate/convert-product-price were removed in 1.4 (not merely
+# deprecated), so their prefixes are gone — a 404 needs no Sunset header.
 DEPRECATED_PREFIXES = (
     "/api/v1/private/suppliers",
     "/api/v1/private/warehouses",
     "/api/v1/private/stocks",
     "/api/v1/private/product-supplier",
-    "/api/v1/public/exchange-rate",
-    "/api/v1/public/convert-product-price",
 )
 
 # RFC 8594 Sunset: date after which these endpoints may be removed.

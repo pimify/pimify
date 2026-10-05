@@ -1,10 +1,9 @@
 # Python standard library imports
-from datetime import datetime, date
+from datetime import date
 from typing import List, Optional
 
 # Third-party imports
 from ninja import Schema
-from pydantic import Field
 
 # Basic message schema
 class Message(Schema):
@@ -29,13 +28,6 @@ class OrganizationDetailSchema(Schema):
 
 
 # Product-related schemas
-class ProductImageSchema(Schema):
-    """Schema for product image details."""
-    id: int
-    image: str
-    alt_text: Optional[str] = None
-
-
 class ProductFilterSchema(Schema):
     """
     Schema for product filtering parameters.
@@ -56,32 +48,6 @@ class ProductListSchema(Schema):
     price: float
     currency: str
     is_active: bool
-
-    @staticmethod
-    def resolve_price(obj):
-        return float(obj.price.amount)
-    
-    @staticmethod
-    def resolve_currency(obj):
-        return str(obj.price.currency)
-
-
-class ProductInfoSchema(Schema):
-    """
-    Schema for detailed product information.
-    Includes all basic fields plus stock, timestamps, and related images.
-    """
-    id: str
-    name: str
-    sku: str
-    description: Optional[str] = None
-    price: float
-    currency: str
-    stock_quantity: int
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-    images: Optional[List[ProductImageSchema]] = Field(default_factory=list)
 
     @staticmethod
     def resolve_price(obj):
@@ -153,21 +119,4 @@ class PprductSupplierDetails(Schema):
     supplier: SupplierInfoSchema
     cost_price: float
     lead_time: int
-
-
-class ExchangeRateResponseSchema(Schema):
-    """
-    Schema for exchange rate response deatils.
-    """
-    rate: float
-    from_currency: str
-    to_currency: str
-
-
-class ProductPriceResponseSchema(Schema):
-    """
-    Schema for converted product price rate response deatils.
-    """
-    product: str
-    price: str
     

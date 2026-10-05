@@ -1,69 +1,54 @@
-"""Phase 1 parity tests: the stock-aggregate signal must behave exactly like
-the old api.Stock.save() override it replaced.
+"""Phase 1.4 retirement tests: api WMS models are gone (option A), the
+unmanaged mirrors read the surviving tables, and stay read-only.
+
+Mirror tables are seeded with raw SQL: no managed model exists anymore that
+could create rows, which is exactly the point — nothing in the codebase can
+write these tables through the ORM.
 """
+from django.db import connection
 from django.test import TestCase
 
-from api.models import Product, Stock, Warehouse
+from api.models import Product
 from inventory.models import Stock as MirrorStock, Warehouse as MirrorWarehouse
 
 
-class StockAggregateSignalTest(TestCase):
-    def setUp(self):
-        self.warehouse = Warehouse.objects.create(name="W1", address="addr")
-        self.product = Product.objects.create(name="Widget", sku="W-001", price=10)
+def seed_warehouse(pk='wh-001', name='W1'):
+    with connection.cursor() as c:
+        c.execute(
+            'INSERT INTO "Warehouses" (id, name, address) VALUES (%s, %s, %s)',
+            [pk, name, 'addr'],
+        )
+    return MirrorWarehouse.objects.get(pk=pk)
 
-    def test_create_updates_product_quantity(self):
-        self.assertEqual(self.product.stock_quantity, 0)
-        Stock.objects.create(product=self.product, quantity=5, warehouse=self.warehouse)
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock_quantity, 5)
 
-    def test_multiple_rows_sum(self):
-        Stock.objects.create(product=self.product, quantity=5, warehouse=self.warehouse)
-        Stock.objects.create(product=self.product, quantity=3, warehouse=self.warehouse)
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock_quantity, 8)
+def seed_stock(pk='st-001', product_id=None, quantity=1, warehouse_id='wh-001'):
+    with connection.cursor() as c:
+        c.execute(
+            'INSERT INTO "Stocks" (id, product_id, quantity, warehouse_id)'
+            ' VALUES (%s, %s, %s, %s)',
+            [pk, product_id, quantity, warehouse_id],
+        )
+    return MirrorStock.objects.get(pk=pk)
 
-    def test_update_recomputes_not_appends(self):
-        stock = Stock.objects.create(product=self.product, quantity=5, warehouse=self.warehouse)
-        stock.quantity = 2
-        stock.save()
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock_quantity, 2)
 
-    def test_delete_recomputes_quantity(self):
-        Stock.objects.create(product=self.product, quantity=5, warehouse=self.warehouse)
-        doomed = Stock.objects.create(product=self.product, quantity=3, warehouse=self.warehouse)
-        doomed.delete()
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock_quantity, 5)
-
-    def test_delete_last_row_resets_to_zero(self):
-        stock = Stock.objects.create(product=self.product, quantity=5, warehouse=self.warehouse)
-        stock.delete()
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock_quantity, 0)
-
-    def test_product_cascade_delete_does_not_crash(self):
-        # Product delete cascades into Stock rows; the post_delete receiver
-        # must tolerate the already-gone parent instead of crashing the cascade.
-        Stock.objects.create(product=self.product, quantity=5, warehouse=self.warehouse)
-        pk = self.product.pk
-        self.product.delete()
-        self.assertFalse(Product.objects.filter(pk=pk).exists())
-        self.assertEqual(Stock.objects.filter(product_id=pk).count(), 0)
+class RetiredApiModelsTest(TestCase):
+    def test_wms_models_are_gone_from_api_state(self):
+        # Retirement guard: re-adding Supplier/Stock/etc. to api/models.py
+        # must be a deliberate, reviewed act — never an accident.
+        import api.models as api_models
+        for name in ('Supplier', 'ProductSupplier', 'Warehouse', 'Stock'):
+            self.assertFalse(
+                hasattr(api_models, name), f'api.{name} resurrected?')
 
 
 class MirrorReadOnlyTest(TestCase):
-    """Writes through unmanaged mirrors must fail loudly: the aggregate
-    signal binds api.Stock only, so a silent mirror write would corrupt
-    stock_quantity without any error."""
+    """Writes through unmanaged mirrors must fail loudly (no aggregate
+    signal exists anymore to keep any denormalized column in sync)."""
 
     def setUp(self):
         self.product = Product.objects.create(name="Widget", sku="RO-001", price=10)
-        api_warehouse = Warehouse.objects.create(name="W1", address="addr")
-        # Mirror instances must be read back through the mirror (FK type check).
-        self.mirror_warehouse = MirrorWarehouse.objects.get(pk=api_warehouse.pk)
+        self.mirror_warehouse = seed_warehouse()
+        seed_stock(product_id=self.product.pk, quantity=3)
 
     def _mirror_stock(self, **kwargs):
         defaults = {'product': self.product, 'quantity': 1, 'warehouse': self.mirror_warehouse}
@@ -99,6 +84,14 @@ class MirrorReadOnlyTest(TestCase):
             MirrorStock.objects.all().delete()
 
     def test_mirror_reads_still_work(self):
-        Stock.objects.create(product=self.product, quantity=3, warehouse=Warehouse.objects.get(pk=self.mirror_warehouse.pk))
-        self.assertEqual(MirrorStock.objects.filter(product=self.product).count(), 1)
+        self.assertEqual(
+            MirrorStock.objects.filter(product=self.product).count(), 1)
         self.assertEqual(MirrorWarehouse.objects.count(), 1)
+
+    def test_tables_survived_model_retirement(self):
+        # Option (a) proof: tables exist and hold rows after DeleteModel.
+        with connection.cursor() as c:
+            tables = {r[0] for r in c.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+        for table in ('Warehouses', 'Stocks', 'Suppliers', 'Product Suppliers'):
+            self.assertIn(table, tables)

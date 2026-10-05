@@ -233,3 +233,74 @@ class CatalogApiTest(TestCase):
         assert '/api/v1/catalog/products/{id}/' in paths
         assert '/api/v1/catalog/categories/tree/' in paths
         assert '/api/v1/catalog/products/{id}/completeness/' in paths
+        # Exchange paths are gone (1.4 removal, Sunset lapsed in-app).
+        assert not any('exchange-rate' in p or 'convert-product-price' in p
+                       for p in paths)
+
+
+class PublicCutoverTest(TestCase):
+    """Phase 1.4: legacy /public/ paths serve catalog data (api models untouched)."""
+
+    def setUp(self):
+        from api.main import app
+        self.client = TestClient(app)
+        key = APIKey.objects.create(name='cut')
+        self.h = {'X-API-Key': key.api_key}
+        self.product = Product.objects.create(
+            sku='CUT-001', name='Cut', list_price=Decimal('20.00'), is_active=True)
+        root = Category.objects.create(name='R', slug='r')
+        self.root_id = root.id
+        ProductCategory.objects.create(product=self.product, category=root)
+        ProductMedia.objects.create(product=self.product, role=MediaRoles.MAIN, file='')
+
+    def _get(self, path):
+        # NOTE: TestClient(app) resolves router-relative paths (no /api/v1/).
+        return self.client.get(f'/public{path}', headers=self.h)
+
+    def test_products_list_serves_catalog_without_stock(self):
+        d = self._get('/products/').json()
+        assert d['count'] >= 1
+        item = next(i for i in d['items'] if i['sku'] == 'CUT-001')
+        assert 'stock_quantity' not in item
+        assert item['price'] == 20.0 and item['currency'] == 'USD'
+
+    def test_products_filters_still_work(self):
+        assert self._get('/products/?search=cut').json()['count'] == 1
+        assert self._get('/products/?search=nope').json()['count'] == 0
+        assert self._get('/products/?min_price=10&max_price=30').json()['count'] == 1
+        assert self._get('/products/?min_price=100').json()['count'] == 0
+
+    def test_product_detail_and_images_and_categories(self):
+        d = self._get(f'/products/{self.product.id}/').json()
+        assert d['sku'] == 'CUT-001' and 'stock_quantity' not in d
+        media = self._get(f'/products/{self.product.id}/images/').json()
+        assert len(media) == 1 and media[0]['role'] == 'main'
+        cats = self._get('/categories/').json()
+        assert any(c['slug'] == 'r' and 'kind' in c for c in cats['items'])
+        by_cat = self._get(f'/categories/{self.root_id}/products/').json()
+        assert any(i['sku'] == 'CUT-001' for i in by_cat['items'])
+
+    def test_exchange_endpoints_are_gone(self):
+        # Removed routes don't resolve at all in TestClient (real HTTP would 404).
+        with self.assertRaises(Exception):
+            self._get('/exchange-rate/?to_currency=EUR')
+        with self.assertRaises(Exception):
+            self._get('/convert-product-price/?product_sku=x&to_currency=EUR')
+
+
+class OrganizationInversionTest(TestCase):
+    """Phase 1.4: one org has many keys (was: org pointed at one key)."""
+
+    def test_key_points_at_org_and_reverse_accessor(self):
+        from api.models import Organization
+        org = Organization.objects.create(name='Acme')
+        key = APIKey.objects.create(name='k', organization=org)
+        assert key.organization_id == org.pk
+        assert list(org.api_keys.all()) == [key]
+
+    def test_legacy_key_without_org_still_authenticates(self):
+        from api.auth import header_key
+        key = APIKey.objects.create(name='loose')
+        assert key.organization_id is None
+        # authenticate() only filters api_key + is_active (unchanged).
+        assert header_key.authenticate(None, key.api_key) is not None

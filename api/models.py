@@ -58,7 +58,6 @@ class Product(models.Model):
     sku = models.CharField(max_length=150, unique=True)
     description = models.TextField(blank=True, null=True)
     price = MoneyField(max_digits=14, decimal_places=2, default_currency='USD')
-    stock_quantity = models.IntegerField(default=0, editable=False)
     is_active = models.BooleanField(default=False)
     categories = models.ManyToManyField('Category', related_name='products')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -97,46 +96,10 @@ class Category(models.Model):
         return self.name
 
 
-class Supplier(models.Model):
-    """
-    Represents a supplier/vendor who provides products.
-    """
-    id = NanoIDField(primary_key=True)
-    name = models.CharField(max_length=100)
-    email = models.EmailField()
-    phone = models.CharField(max_length=20)
-    address = models.TextField()
-
-    class Meta:
-        db_table = 'Suppliers'
-        verbose_name_plural = 'Suppliers'
-        indexes = [
-            models.Index(fields=['id']),
-            models.Index(fields=['name']),
-        ]
-
-    def __str__(self):
-        return self.name
-
-
-class ProductSupplier(models.Model):
-    """
-    Represents the relationship between products and their suppliers,
-    including cost and lead time information.
-    """
-    id = NanoIDField(primary_key=True)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='suppliers')
-    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
-    cost_price = models.DecimalField(max_digits=10, decimal_places=2)
-    lead_time = models.IntegerField(help_text="Lead time in days")
-
-    class Meta:
-        db_table = 'Product Suppliers'
-        verbose_name_plural = 'Product Suppliers'
-        unique_together = ('product', 'supplier')
-
-    def __str__(self):
-        return self.id
+# NOTE (Phase 1.4 cutover, option A): Supplier, ProductSupplier, Warehouse and
+# Stock were deleted from api state via SeparateDatabaseAndState (migration
+# api.0003) — their TABLES stay intact for the unmanaged inventory/procurement
+# mirrors. ProductImage stays: catalog backfill reads it on fresh installs.
 
 
 class ProductImage(models.Model):
@@ -163,51 +126,6 @@ def delete_image_file(sender, instance, **kwargs):
         os.remove(instance.image.path)
 
 
-class Warehouse(models.Model):
-    """
-    Represents a physical warehouse location where products are stored.
-    """
-    id = NanoIDField(primary_key=True)
-    name = models.CharField(max_length=100)
-    address = models.TextField()
-
-    class Meta:
-        db_table = 'Warehouses'
-        verbose_name_plural = 'Warehouses'
-        indexes = [
-            models.Index(fields=['id']),
-            models.Index(fields=['name']),
-        ]
-
-    def __str__(self):
-        return self.name
-
-
-class Stock(models.Model):
-    """
-    Tracks product inventory levels across different warehouses.
-    """
-    id = NanoIDField(primary_key=True)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)
-    quantity = models.IntegerField(default=0)
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
-
-    class Meta:
-        db_table = 'Stocks'
-        verbose_name_plural = 'Stocks'
-        indexes = [
-            models.Index(fields=['id'])
-        ]
-
-    # NOTE (Phase 1 pure-PIM pivot): the stock-aggregate write logic that
-    # used to live in Stock.save() moved to
-    # inventory.signals.update_product_stock_cache (post_save, identical
-    # behavior). api.Stock stays the canonical model this release.
-
-    def __str__(self):
-        return str(self.id)
-
-
 class APIKey(models.Model):
     """
     Manages API authentication keys for external access to the system.
@@ -216,6 +134,11 @@ class APIKey(models.Model):
     api_key = models.CharField(max_length=100, unique=True, editable=False)
     name = models.CharField(max_length=100)
     is_active = models.BooleanField(default=True)
+    organization = models.ForeignKey(
+        'Organization', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='api_keys',
+        help_text="Owning organization (one org has many keys). Null = unassigned legacy key.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -264,7 +187,6 @@ class Organization(models.Model):
     email = models.EmailField(blank=True, null=True)
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     website = models.URLField(blank=True, null=True)
-    api_keys = models.ForeignKey(APIKey, on_delete=models.CASCADE, related_name='organization', null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

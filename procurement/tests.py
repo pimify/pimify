@@ -1,12 +1,21 @@
-"""Phase 1: procurement mirrors are read-only (same contract as inventory/).
-
-The mirrors share api tables; writes must go through the canonical api
-models. Every write path raises NotImplementedError.
+"""Phase 1.4 retirement: procurement mirrors are read-only (same contract as
+inventory/). Tables are seeded with raw SQL — no managed model exists anymore
+that could create rows.
 """
+from django.db import connection
 from django.test import TestCase
 
-from api.models import Supplier
 from procurement.models import ProductSupplier as MirrorPS, Supplier as MirrorSupplier
+
+
+def seed_supplier(pk='sup-001'):
+    with connection.cursor() as c:
+        c.execute(
+            'INSERT INTO "Suppliers" (id, name, email, phone, address)'
+            ' VALUES (%s, %s, %s, %s, %s)',
+            [pk, 'S', 's@x.com', '1', 'a'],
+        )
+    return MirrorSupplier.objects.get(pk=pk)
 
 
 class ProcurementMirrorReadOnlyTest(TestCase):
@@ -30,6 +39,6 @@ class ProcurementMirrorReadOnlyTest(TestCase):
             MirrorSupplier.objects.all().delete()
 
     def test_mirror_reads_still_work(self):
-        Supplier.objects.create(**self._supplier_kwargs())
+        seed_supplier()
         self.assertEqual(MirrorSupplier.objects.count(), 1)
         self.assertEqual(MirrorPS.objects.count(), 0)
