@@ -3,6 +3,7 @@ from urllib.parse import urlparse
 from .base import *
 # NOTE: underscore-private, so not carried by the star import above.
 from .base import _dbbackup_storage
+from .base import _media_storage
 
 # Debug is always False in production (ignore env to avoid accidents).
 DEBUG = False
@@ -67,10 +68,10 @@ STORAGES = {
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
-    "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
-        "LOCATION": MEDIA_ROOT,  # Ensure MEDIA_ROOT is defined above
-    },
+    # Same env-gated media alias as base (local dir unless MEDIA_S3_BUCKET
+    # or MEDIA_BASE_URL is set). NOTE: with DEBUG=False nothing serves
+    # /media/ from Django — production must serve it via S3 or nginx.
+    "default": _media_storage(),
     # Same env-gated alias as base (local dir unless DBBACKUP_S3_BUCKET set).
     "dbbackup": _dbbackup_storage(),
 }

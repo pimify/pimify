@@ -1,4 +1,7 @@
 # Import necessary modules
+import re
+import warnings
+
 from decouple import config
 from pathlib import Path
 from django.urls import reverse_lazy
@@ -131,26 +134,91 @@ MEDIA_ROOT = BASE_DIR / '../media'
 # download endpoint (pull model). Local dir; off-site happens by fetching.
 FEEDS_ROOT = BASE_DIR / '../feeds'
 
+def _env_str(name, default=""):
+    """decouple does NOT strip inline comments: a `.env` line
+    `VAR=  # note` yields the literal '# note'. Strip a comment that starts
+    the value or follows whitespace, so a documented .env cannot turn a
+    comment into a live endpoint URL. An embedded `#` without preceding
+    whitespace (e.g. a URL fragment) is left alone."""
+    value = config(name, default=default)
+    if isinstance(value, str) and re.search(r'(^|\s)#', value):
+        value = re.split(r'(^|\s)#', value, maxsplit=1)[0].strip()
+    return value
+
+
+def _env_bool(name, default=False):
+    """Tolerant bool: an unparseable value (e.g. a leftover `.env` comment)
+    warns and falls back instead of crashing settings at import."""
+    raw = config(name, default=None)
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return default
+    text = re.split(r'(^|\s)#', str(raw), maxsplit=1)[0].strip().lower()
+    if text in ('1', 'true', 'yes', 'on'):
+        return True
+    if text in ('0', 'false', 'no', 'off'):
+        return False
+    warnings.warn(f'{name}={raw!r} is not a boolean; using {default}.', stacklevel=2)
+    return default
+
+
 def _dbbackup_storage():
     """Backup storage alias: local dir unless S3 is configured (defined before
     STORAGES because the dict literal calls it). Credentials come from the
     standard AWS env chain, never from settings."""
-    bucket = config("DBBACKUP_S3_BUCKET", default="")
+    bucket = _env_str("DBBACKUP_S3_BUCKET")
     if not bucket:
         return {
             "BACKEND": "django.core.files.storage.FileSystemStorage",
             "OPTIONS": {"location": BASE_DIR / "../backups"},
         }
     options = {"bucket_name": bucket}
-    endpoint = config("DBBACKUP_S3_ENDPOINT_URL", default="")
+    endpoint = _env_str("DBBACKUP_S3_ENDPOINT_URL")
     if endpoint:
         options["endpoint_url"] = endpoint  # MinIO / S3-compatible API
-    region = config("DBBACKUP_S3_REGION", default="")
+    region = _env_str("DBBACKUP_S3_REGION")
     if region:
         options["region_name"] = region
-    prefix = config("DBBACKUP_S3_PREFIX", default="pimify/")
+    prefix = _env_str("DBBACKUP_S3_PREFIX", default="pimify/")
     if prefix:
         options["location"] = prefix
+    return {"BACKEND": "storages.backends.s3.S3Storage", "OPTIONS": options}
+
+
+def _media_storage():
+    """Media storage: local dir unless S3/MinIO is configured (defined before
+    STORAGES because the dict literal calls it). Credentials come from the
+    standard AWS env chain, never from settings.
+
+    Marketplace crawlers fetch asynchronously, hours after a build: signed
+    URLs (django-storages' querystring_auth default) would 403, so S3 media
+    is unsigned — the bucket/prefix must be publicly readable (or behind a
+    CDN via MEDIA_S3_CUSTOM_DOMAIN). Self-hosted deployments get absolute
+    URLs on their own origin via MEDIA_BASE_URL instead."""
+    bucket = _env_str("MEDIA_S3_BUCKET")
+    if not bucket:
+        options = {"location": MEDIA_ROOT}
+        base_url = _env_str("MEDIA_BASE_URL")
+        if base_url:
+            options["base_url"] = base_url.rstrip("/") + "/" + MEDIA_URL.lstrip("/")
+        return {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+            "OPTIONS": options,
+        }
+    options = {
+        "bucket_name": bucket,
+        "querystring_auth": False,  # see docstring: signed URLs expire
+    }
+    prefix = _env_str("MEDIA_S3_PREFIX", default="media/")
+    if prefix:
+        options["location"] = prefix
+    for env, key in (("MEDIA_S3_ENDPOINT_URL", "endpoint_url"),
+                     ("MEDIA_S3_REGION", "region_name"),
+                     ("MEDIA_S3_CUSTOM_DOMAIN", "custom_domain")):
+        value = _env_str(env)
+        if value:
+            options[key] = value
+    if _env_bool("MEDIA_S3_PUBLIC_READ"):
+        options["object_parameters"] = {"ACL": "public-read"}
     return {"BACKEND": "storages.backends.s3.S3Storage", "OPTIONS": options}
 
 
@@ -158,10 +226,7 @@ STORAGES = {
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
     },
-    "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
-        "LOCATION": MEDIA_ROOT,
-    },
+    "default": _media_storage(),
     # django-dbbackup >= 5 reads STORAGES["dbbackup"] (the old
     # DBBACKUP_STORAGE[_OPTIONS] settings raise RuntimeError there).
     # Local filesystem by default; S3 when DBBACKUP_S3_BUCKET is set.
