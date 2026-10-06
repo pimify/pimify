@@ -46,6 +46,12 @@ def _resolved_attrs(rows, channel_id, locale_id):
     return out
 
 
+def _attribute_types(all_values):
+    """{attribute_code: schema type} for the transformer (metafield typing).
+    Zero queries: attributes are select_related on every value row."""
+    return {row.attribute.code: row.attribute.type for row in all_values}
+
+
 def _in_scope(media_rows, channel_id, locale_id):
     """Eligibility rule shared by media and the values endpoint: each axis
     unset or exact. Feed builders always pass both params, so the two agree."""
@@ -143,6 +149,9 @@ def build_feed_payload(feed):
         variants = [{
             'sku': v.sku,
             'is_default': v.is_default,
+            'price': (float(v.list_price.amount) if v.list_price is not None
+                      else float(product.list_price.amount)),
+            'price_is_override': v.list_price is not None,
             'attributes': _resolved_attrs(list(v.values.all()), channel_id, locale_id),
         } for v in product.variants.all()]
         media_rows = list(product.media.all())
@@ -162,8 +171,10 @@ def build_feed_payload(feed):
             'price': float(product.list_price.amount),
             'currency': str(product.list_price.currency),
             'brand': product.brand.slug if product.brand_id else None,
+            'brand_name': product.brand.name if product.brand_id else None,
             'categories': [link.category.slug for link in product.category_links.all()],
             'attributes': _resolved_attrs(list(product.values.all()), channel_id, locale_id),
+            'attribute_types': _attribute_types(all_values),
             'variants': variants,
             'media': media,
             'completeness': completeness,
@@ -195,21 +206,38 @@ def run_feed(feed):
     """Build one feed end-to-end: render file under FEEDS_ROOT, log the run.
 
     Shared by the `build_feed` command and the scheduler (single path).
-    Raises on failure AFTER recording a failed run; returns the success run.
+    A feed with `profile` set renders that platform's artifact instead of
+    the generic payload (platform artifacts are JSON; Feed.clean rejects
+    profile + CSV). Raises on failure AFTER recording a failed run; returns
+    the success run.
     """
     from pathlib import Path
 
     from django.conf import settings
 
     from .models import FeedRun, FeedRunStatus
+    from .platforms import get_transformer
 
     root = Path(settings.FEEDS_ROOT)
     root.mkdir(parents=True, exist_ok=True)
     stamp = timezone.now().strftime('%Y%m%d-%H%M%S')
-    filename = f"{feed.id}_{stamp}.{feed.format}"
+    if feed.profile_id:
+        filename = f"{feed.id}_{stamp}.{feed.profile.platform}.json"
+    else:
+        filename = f"{feed.id}_{stamp}.{feed.format}"
     try:
         payload, skipped, shipped_ids = build_feed_payload(feed)
-        body = render_json(payload) if feed.format == 'json' else render_csv(payload)
+        report = {}
+        if feed.profile_id:
+            artifact = get_transformer(feed.profile.platform)(payload, feed.profile)
+            for reason, skus in artifact['report']['skipped'].items():
+                skipped.setdefault(reason, []).extend(skus)
+            report = artifact['report']
+            body = render_json(artifact)
+            count = artifact['report']['included']
+        else:
+            body = render_json(payload) if feed.format == 'json' else render_csv(payload)
+            count = len(payload['products'])
         (root / filename).write_text(body, encoding='utf-8')
     except Exception as exc:  # noqa: BLE001 — must log, then fail loudly
         FeedRun.objects.create(
@@ -219,7 +247,7 @@ def run_feed(feed):
     stamp_shipped(shipped_ids)  # after the write: failed builds stamp nothing
     return FeedRun.objects.create(
         feed=feed, status=FeedRunStatus.SUCCESS,
-        items=len(payload['products']), skipped=skipped, file=filename)
+        items=count, skipped=skipped, report=report, file=filename)
 
 
 def render_json(payload) -> str:
@@ -250,7 +278,7 @@ def render_csv(payload) -> str:
     head = (['product_sku', 'product_name', 'description', 'price', 'currency',
              'brand', 'categories', 'completeness_percent', 'complete']
             + [f'attr_{c}' for c in attr_codes]
-            + ['variant_sku', 'variant_default']
+            + ['variant_sku', 'variant_default', 'variant_price']
             + [f'var_{c}' for c in var_codes]
             + ['media_urls'])
     buf = io.StringIO()
@@ -265,9 +293,10 @@ def render_csv(payload) -> str:
                 comp.get('complete', '')]
         pattrs = [_csv_cell(p['attributes'].get(c)) for c in attr_codes]
         urls = '|'.join(u for u in (m['url'] for m in p['media']) if u)
-        rows = p['variants'] or [{'sku': '', 'is_default': '', 'attributes': {}}]
+        rows = p['variants'] or [{'sku': '', 'is_default': '', 'price': '',
+                                   'attributes': {}}]
         for v in rows:
-            w.writerow(base + pattrs + [v['sku'], v['is_default']]
+            w.writerow(base + pattrs + [v['sku'], v['is_default'], v.get('price', '')]
                        + [_csv_cell(v['attributes'].get(c))
                           for c in var_codes] + [urls])
     return buf.getvalue()

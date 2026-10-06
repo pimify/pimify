@@ -36,6 +36,7 @@ from .models import (
     Feed,
     FeedRun,
     Locale,
+    PlatformProfile,
     Product,
     ProductAssociation,
     ProductCategory,
@@ -122,6 +123,7 @@ class ProductVariantInline(TabularInline):
     tab = True
     per_page = 10
     show_change_link = True
+    fields = ('sku', 'is_default', 'list_price', 'sort')
 
 
 class ProductMediaInline(TabularInline):
@@ -334,7 +336,7 @@ class FeedAdmin(ModelAdmin, ImportExportModelAdmin):
     compressed_fields = True
     warn_unsaved_form = True
     list_display = ('name', 'channel', 'locale', 'format', 'is_active',
-                    'only_complete', 'schedule_cron')
+                    'only_complete', 'schedule_cron', 'profile')
     list_filter = ('channel', 'locale', 'format', 'is_active')
     search_fields = ['name']
     import_form_class = ImportForm
@@ -347,7 +349,8 @@ class FeedRunAdmin(ModelAdmin):
 
     list_display = ('feed', 'created_at', 'status', 'items', 'file')
     list_filter = ('status', 'feed')
-    readonly_fields = ('feed', 'status', 'items', 'skipped', 'file', 'error', 'created_at')
+    readonly_fields = ('feed', 'status', 'items', 'skipped', 'report',
+                       'file', 'error', 'created_at')
 
     def has_add_permission(self, request):
         return False
@@ -357,3 +360,14 @@ class FeedRunAdmin(ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(PlatformProfile)
+class PlatformProfileAdmin(ModelAdmin, ImportExportModelAdmin):
+    compressed_fields = True
+    warn_unsaved_form = True
+    list_display = ('name', 'platform', 'channel', 'is_active')
+    list_filter = ('platform', 'channel', 'is_active')
+    search_fields = ['name']
+    import_form_class = ImportForm
+    export_form_class = SelectableFieldsExportForm

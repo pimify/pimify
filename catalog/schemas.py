@@ -171,7 +171,12 @@ class VariantSchema(Schema):
     sku: str
     is_default: bool
     sort: int
+    price: Optional[float] = None
     values: List[AttributeValueSchema] = []
+
+    @staticmethod
+    def resolve_price(obj):
+        return float(obj.list_price.amount) if obj.list_price is not None else None
 
 
 class MediaSchema(Schema):
@@ -279,6 +284,8 @@ class FeedSchema(Schema):
     is_active: bool
     only_complete: bool = False
     schedule_cron: str = ''
+    profile: Optional[int] = None
+    profile_platform: Optional[str] = None
 
     @staticmethod
     def resolve_channel(obj):
@@ -288,6 +295,26 @@ class FeedSchema(Schema):
     def resolve_locale(obj):
         return obj.locale_id
 
+    @staticmethod
+    def resolve_profile(obj):
+        return obj.profile_id
+
+    @staticmethod
+    def resolve_profile_platform(obj):
+        return obj.profile.platform if obj.profile_id else None
+
+
+class ProfileSchema(Schema):
+    id: int
+    name: str
+    platform: str
+    channel: str
+    is_active: bool
+
+    @staticmethod
+    def resolve_channel(obj):
+        return obj.channel_id
+
 
 class FeedRunSchema(Schema):
     id: int
@@ -296,6 +323,7 @@ class FeedRunSchema(Schema):
     status: str
     items: int
     skipped: Dict[str, List[str]] = {}
+    report: Dict[str, Any] = {}
     file: str = ''
     error: str = ''
     created_at: datetime = None

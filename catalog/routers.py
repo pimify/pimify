@@ -27,6 +27,7 @@ from .models import (
     FeedRun,
     FeedRunStatus,
     Locale,
+    PlatformProfile,
     Product,
     ProductAssociation,
     ProductCategory,
@@ -51,6 +52,7 @@ from .schemas import (
     ProductDetailSchema,
     ProductHistorySchema,
     ProductListSchema,
+    ProfileSchema,
     VariantSchema,
 )
 from .resolution import resolve_scoped_value
@@ -427,6 +429,23 @@ def product_completeness(request, id: str, channel: str, locale: str):
 
 
 # Feeds -----------------------------------------------------------------------
+
+@router.get("/profiles/", auth=header_key,
+            response={200: List[ProfileSchema], 404: Error}, tags=["Feeds"])
+@paginate(PageNumberPagination, page_size=20)
+def list_profiles(request, platform: Optional[str] = None,
+                  channel: Optional[str] = None,
+                  is_active: Optional[bool] = None):
+    """Discover platform profiles (transform contracts) attached to feeds."""
+    profiles = PlatformProfile.objects.all()
+    if platform is not None:
+        profiles = profiles.filter(platform=platform)
+    if channel is not None:
+        profiles = profiles.filter(channel_id=channel)
+    if is_active is not None:
+        profiles = profiles.filter(is_active=is_active)
+    return profiles.order_by('name')
+
 
 @router.get("/feeds/", auth=header_key,
             response={200: List[FeedSchema], 404: Error}, tags=["Feeds"])

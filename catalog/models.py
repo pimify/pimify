@@ -428,6 +428,10 @@ class ProductVariant(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='variants')
     sku = models.CharField(max_length=150, unique=True)
     is_default = models.BooleanField(default=False)
+    list_price = MoneyField(
+        max_digits=14, decimal_places=2, null=True, blank=True,
+        help_text="Per-variant MSRP override; falls back to Product.list_price. "
+                  "Never cost — PIM owns list price only.")
     sort = models.PositiveSmallIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -605,6 +609,10 @@ class Feed(models.Model):
     schedule_cron = models.CharField(
         max_length=100, blank=True, default='',
         help_text="Crontab cadence (e.g. '0 6 * * *'); blank = manual builds only.")
+    profile = models.ForeignKey(
+        'PlatformProfile', null=True, blank=True, on_delete=models.PROTECT,
+        related_name='feeds',
+        help_text="Platform transform rendered instead of the generic payload.")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -620,6 +628,62 @@ class Feed(models.Model):
             except ValueError as exc:
                 from django.core.exceptions import ValidationError
                 raise ValidationError({'schedule_cron': f'Invalid crontab: {exc}'})
+        if self.profile_id is not None and self.format == FeedFormat.CSV:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                {'profile': 'Platform artifacts are JSON; unset the profile for CSV feeds.'})
+
+
+class PlatformChoices(models.TextChoices):
+    SHOPIFY = 'shopify', 'Shopify'
+    AMAZON = 'amazon', 'Amazon'
+    FLIPKART = 'flipkart', 'Flipkart'
+
+
+class PlatformProfile(models.Model):
+    """How one platform consumes the generic feed payload for a channel.
+
+    Transformers are pure functions over the generic payload (file-artifact
+    v1, no network); `attribute_map` is {pim_attribute_code: platform key}
+    and `category_map` is {pim_category_slug: platform product type}.
+    """
+
+    platform = models.CharField(
+        max_length=8, choices=PlatformChoices.choices, default=PlatformChoices.SHOPIFY)
+    name = models.CharField(max_length=100, unique=True)
+    channel = models.ForeignKey(
+        Channel, on_delete=models.PROTECT, related_name='platform_profiles')
+    attribute_map = models.JSONField(
+        default=dict,
+        help_text="{pim_attribute_code: platform metafield key}.")
+    category_map = models.JSONField(
+        default=dict,
+        help_text="{pim_category_slug: platform product type}.")
+    defaults = models.JSONField(
+        default=dict,
+        help_text="{vendor, status, tags[], product_type, metafield_namespace}.")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['platform', 'channel'], name='uniq_platform_profile_channel'),
+        ]
+
+    def __str__(self):
+        return f"{self.name} [{self.platform}/{self.channel_id}]"
+
+    def clean(self):
+        super().clean()
+        from django.core.exceptions import ValidationError
+        unknown = sorted(
+            code for code in (self.attribute_map or {})
+            if not Attribute.objects.filter(pk=code).exists())
+        if unknown:
+            raise ValidationError(
+                {'attribute_map': f'Unknown attribute codes: {unknown}.'})
 
 
 class FeedRunStatus(models.TextChoices):
@@ -637,7 +701,10 @@ class FeedRun(models.Model):
     skipped = models.JSONField(
         default=dict,
         help_text="{reason: [skus]} excluded from this build "
-                  "(unpublished / incomplete / no_rule).")
+                  "(unpublished / incomplete / no_rule / platform reasons).")
+    report = models.JSONField(
+        default=dict,
+        help_text="Platform transform report (warnings/notes); {} for generic feeds.")
     file = models.CharField(
         max_length=255, blank=True, default='',
         help_text="Path relative to FEEDS_ROOT; empty when the run failed.")
