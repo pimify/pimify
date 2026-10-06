@@ -208,32 +208,39 @@ UNFOLD = {
             "href": lambda request: static("img/favicon.ico"),
         },
     ],
-    "STYLES": [
-        lambda request: static("dashboard/css/styles.css"),
-    ],
-    
+    # No custom stylesheet: the previous Tailwind v3 build (with its own
+    # preflight) conflicted with Unfold's Tailwind v4 output. Add plain CSS
+    # here if a custom class is ever needed — do not add a second Tailwind.
+
     # Color configuration
+    # Values must be COMPLETE CSS colors. Unfold emits each one verbatim as
+    # `--color-<group>-<key>: <value>` (unfold/layouts/skeleton.html) and its
+    # Tailwind v4 build consumes them directly (`.text-font-default-light{
+    # color:var(--color-font-default-light)}`) — no rgb() wrapper. Tailwind v3
+    # triplet syntax ("75 85 99") is therefore an invalid color under v4 and
+    # every themed utility silently falls back to inherited color. rgb() is the
+    # exact equivalent of what v3 rendered (rgb(var(--x) / 1)).
     "COLORS": {
         "font": {
-            "subtle-light": "107 114 128",
-            "subtle-dark": "156 163 175",
-            "default-light": "75 85 99",
-            "default-dark": "209 213 219",
-            "important-light": "17 24 39",
-            "important-dark": "243 244 246",
+            "subtle-light": "rgb(107 114 128)",
+            "subtle-dark": "rgb(156 163 175)",
+            "default-light": "rgb(75 85 99)",
+            "default-dark": "rgb(209 213 219)",
+            "important-light": "rgb(17 24 39)",
+            "important-dark": "rgb(243 244 246)",
         },
         "primary": {
-            "50": "255 250 240",
-            "100": "255 238 204",
-            "200": "254 215 170",
-            "300": "253 186 114",
-            "400": "251 146 60",
-            "500": "245 121 0",
-            "600": "220 98 10",
-            "700": "184 79 18",
-            "800": "140 62 25",
-            "900": "104 47 24",
-            "950": "66 28 20"
+            "50": "rgb(255 250 240)",
+            "100": "rgb(255 238 204)",
+            "200": "rgb(254 215 170)",
+            "300": "rgb(253 186 114)",
+            "400": "rgb(251 146 60)",
+            "500": "rgb(245 121 0)",
+            "600": "rgb(220 98 10)",
+            "700": "rgb(184 79 18)",
+            "800": "rgb(140 62 25)",
+            "900": "rgb(104 47 24)",
+            "950": "rgb(66 28 20)"
         },
     },
     

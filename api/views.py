@@ -74,7 +74,9 @@ def dashboard_callback(request, context):
         {
             'title': cat['categories__name'],
             'description': f"{cat['count']} products",
-            'value': int((cat['count'] / total_products) * 100)
+            # Guard: total_products can be 0 (empty catalog), which would
+            # ZeroDivisionError and 500 the whole dashboard.
+            'value': int((cat['count'] / total_products) * 100) if total_products else 0
         } for cat in category_distribution[:8]
     ]
 

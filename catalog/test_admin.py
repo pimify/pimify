@@ -93,6 +93,18 @@ class DashboardKpiTest(TestCase):
         self.assertEqual(missing['metric'], 1)
 
 
+class DashboardEmptyCatalogTest(TestCase):
+    def test_callback_survives_empty_catalog(self):
+        # Progress percentages divide by total_products; on an empty catalog
+        # that was a ZeroDivisionError that 500'd the whole dashboard.
+        from api.views import dashboard_callback
+        self.assertEqual(Product.objects.count(), 0)
+        context = dashboard_callback(None, {})
+        total = next(kpi for kpi in context['kpi'] if kpi['title'] == 'Total Products')
+        self.assertEqual(total['metric'], 0)
+        self.assertEqual(context['progress'], [])
+
+
 class PrivateMirrorHttpTest(TestCase):
     """Phase 1.4: private routers serve the read-only mirrors (same tables)."""
 

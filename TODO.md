@@ -174,12 +174,14 @@ Goal: minimal correct PIM domain in `catalog/`.
 - `Supplier.name` as `Brand` is PIM; full vendor record is not.
 - Monolith stays. No microservices.
 
-## Risks Checklist (check before each release)
-- [ ] EAV N+1 guarded? (`prefetch_related`, paginate 20, `completeness_cache`)
+## Risks Checklist (check before each release)- [ ] EAV N+1 guarded? (`prefetch_related`, paginate 20, `completeness_cache`)
 - [ ] API break announced? (`410 Gone + Sunset` for dropped paths, 1-release overlap)
 - [ ] Backfill reversible? (`RunPython` reverse, `db.sqlite3.bak` verified)
 - [ ] Unfold/Ninja/Django compat tested? (`check`, dashboard screenshot, docs 200)
 - [ ] Over-scope? (no per-locale/channel explosion before Phase 3, no native connector before generic feed)
+- [ ] Custom middleware streaming-safe? (BrotliMiddleware 500'd all static/FileResponse until it skipped streaming — core/tests/test_middleware.py guards it)
+- [ ] Unfold `COLORS` values are COMPLETE CSS colors, not Tailwind v3 triplets? (Unfold emits them verbatim into `--color-*` and v4 consumes them unwrapped — `"75 85 99"` shipped as an invalid color and every themed utility silently fell back; core/tests/test_unfold_settings.py guards it). Never load a second Tailwind build alongside Unfold's v4 output.
+- [ ] Custom admin templates only use classes Unfold actually ships? (Unfold ships ~400 `dark:` utilities but all on `base-*`/`font-*`/`primary-*` tokens — **never the Tailwind `gray-*` ramp**; a hand-rolled template that used `gray-*` went silently unstyled when the stale v3 stylesheet was removed. core/tests/test_admin_template_css.py parses every `class="…"` and fails on unknown classes.)
 
 ---
 
