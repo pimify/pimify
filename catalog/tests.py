@@ -285,6 +285,24 @@ class ChannelLocaleMembershipTest(TestCase):
         self._value(channel=self.channel, value_text='x').full_clean()
         self._value(value_text='x').full_clean()
 
+    def test_default_locale_implicitly_offered(self):
+        # Phase 4.3: default_locale was previously ignored here, so a value
+        # scoped to the channel's own default locale was rejected when the
+        # M2M was empty. The default counts as offered (no M2M side effect).
+        self.channel.default_locale = self.locale
+        self.channel.save()
+        v = self._value(locale=self.locale, channel=self.channel, value_text='x')
+        v.full_clean()  # must not raise
+        v.save()
+
+    def test_unoffered_locale_still_rejected_with_default_set(self):
+        other = Locale.objects.create(code='hi', name='Hindi')
+        self.channel.default_locale = self.locale
+        self.channel.save()
+        with self.assertRaises(ValidationError):
+            self._value(locale=other, channel=self.channel,
+                        value_text='x').full_clean()
+
 
 class BrandSlugTest(TestCase):
     def test_slug_autofills_from_name(self):

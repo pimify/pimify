@@ -42,9 +42,26 @@ def build_scheduled_feed(feed_id):
         print(f"Scheduled feed {feed.name!r} failed: {e}")
 
 def scheduled_feeds():
-    """Active feeds with a crontab cadence (blank = manual builds only)."""
+    """Active feeds with a crontab cadence (blank = manual builds only).
+
+    Phase 4.3: feeds targeting an inactive Locale are excluded — run_feed
+    refuses them, so scheduling them would append a failed FeedRun on every
+    tick forever (FeedRun is append-only with no retention).
+    """
     from catalog.models import Feed
-    return Feed.objects.filter(is_active=True).exclude(schedule_cron='')
+    return (Feed.objects.filter(is_active=True)
+            .exclude(schedule_cron='')
+            .select_related('locale')
+            .filter(locale__is_active=True))
+
+
+def unschedulable_feeds():
+    """Cron-configured feeds skipped because their locale is inactive
+    (reported once at scheduler start instead of failing every tick)."""
+    from catalog.models import Feed
+    return (Feed.objects.filter(is_active=True)
+            .exclude(schedule_cron='')
+            .filter(locale__is_active=False))
 
 # Function to delete old job executions
 @util.close_old_connections  # Ensures database connections are closed properly
@@ -83,6 +100,12 @@ def build_scheduler():
         id="delete_old_job_executions",
         replace_existing=True,
     )
+
+    # Feeds that can never build (inactive locale) are reported once here
+    # rather than failing on every tick and appending a failed run each time.
+    for feed in unschedulable_feeds():
+        print(f"Feed {feed.name!r} targets inactive locale "
+              f"{feed.locale_id!r}; not scheduled.")
 
     # One job per scheduled feed (cron validated at Feed.clean time, but
     # rows can bypass validation via shell/import — a single bad row must

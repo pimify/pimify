@@ -225,6 +225,15 @@ def run_feed(feed):
         filename = f"{feed.id}_{stamp}.{feed.profile.platform}.json"
     else:
         filename = f"{feed.id}_{stamp}.{feed.format}"
+    # Phase 4.3: refuse inactive target locales before writing anything.
+    # Placed before the try so it can't be masked as a write error; the
+    # scheduler's except logs it and the command exits non-zero.
+    if not feed.locale.is_active:
+        FeedRun.objects.create(
+            feed=feed, status=FeedRunStatus.FAILED,
+            error=f"Locale {feed.locale_id!r} is inactive; feed not built.")
+        raise ValueError(
+            f"Feed {feed.name!r} targets inactive locale {feed.locale_id!r}.")
     try:
         payload, skipped, shipped_ids = build_feed_payload(feed)
         report = {}

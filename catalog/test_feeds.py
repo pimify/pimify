@@ -432,3 +432,69 @@ class FeedScheduleTest(TempFeedsMixin, TestCase):
     def cron_feed(self):
         return Feed.objects.create(name='cronx', channel=self.channel,
                                    locale=self.locale)
+
+
+class InactiveLocaleGuardTest(TempFeedsMixin, TestCase):
+    """Phase 4.3: publishing to a deactivated locale is refused — in admin
+    via Feed.clean, and on the build path via run_feed (the scheduler
+    bypasses clean(), so the guard lives there too). Reads of inactive
+    locales stay allowed (introspection, not publishing)."""
+
+    def setUp(self):
+        super().setUp()
+        self.channel, self.locale = make_scope()
+
+    def _feed(self, **kw):
+        kw.setdefault('channel', self.channel)
+        kw.setdefault('locale', self.locale)
+        return Feed.objects.create(name='gated', **kw)
+
+    def test_clean_rejects_inactive_locale(self):
+        from django.core.exceptions import ValidationError
+        self.locale.is_active = False
+        self.locale.save()
+        with self.assertRaises(ValidationError):
+            self._feed().full_clean()
+
+    def test_clean_accepts_active_locale(self):
+        self._feed().full_clean()  # must not raise
+
+    def test_run_feed_writes_nothing_and_logs_failure(self):
+        from catalog.feeds import run_feed
+        self.locale.is_active = False
+        self.locale.save()
+        feed = self._feed()
+        with self.assertRaises(ValueError):
+            run_feed(feed)
+        run = FeedRun.objects.get()
+        self.assertEqual(run.status, 'failed')
+        self.assertIn('inactive', run.error)
+        self.assertEqual(run.file, '')
+        self.assertEqual(list(self.feeds_root().iterdir()), [])
+
+    def test_build_feed_exits_nonzero_for_inactive_locale(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+        self.locale.is_active = False
+        self.locale.save()
+        self._feed()
+        with self.assertRaises(CommandError):
+            call_command('build_feed', 'gated', stdout=StringIO())
+
+    def test_scheduler_skips_inactive_locale_feed(self):
+        # A feed that can never build must not be registered: run_feed
+        # refuses it, so scheduling would append a failed run every tick
+        # (FeedRun is append-only with no retention).
+        from api.management.commands.scheduler import (
+            build_scheduler, scheduled_feeds, unschedulable_feeds,
+        )
+        feed = Feed.objects.create(name='cron', channel=self.channel,
+                                   locale=self.locale, schedule_cron='0 6 * * *')
+        self.locale.is_active = False
+        self.locale.save()
+        self.assertEqual(list(scheduled_feeds()), [])
+        self.assertEqual([f.pk for f in unschedulable_feeds()], [feed.pk])
+        job_ids = [j.id for j in build_scheduler().get_jobs()]
+        self.assertIn('db_backup', job_ids)
+        self.assertNotIn(f'feed_{feed.pk}', job_ids)

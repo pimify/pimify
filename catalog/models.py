@@ -348,9 +348,15 @@ class BaseAttributeValue(models.Model):
         if self.channel_id is not None and not attr.is_channel_scoped:
             raise ValidationError({'channel': f"'{attr.code}' is not channel-scoped."})
         # Membership: a value scoped to both must name a locale the channel
-        # actually offers. Either side alone (or neither) is always allowed.
+        # actually offers — the locales M2M plus the default locale, which is
+        # implicitly offered (Phase 4.3: default_locale was previously ignored
+        # here, so a value scoped to a channel's own default locale was
+        # rejected when the M2M was empty). Either side alone (or neither) is
+        # always allowed.
         if self.locale_id is not None and self.channel_id is not None:
-            if not self.channel.locales.filter(pk=self.locale_id).exists():
+            offered = (self.channel.locales.filter(pk=self.locale_id).exists()
+                       or self.channel.default_locale_id == self.locale_id)
+            if not offered:
                 raise ValidationError(
                     {'locale': f"'{self.locale_id}' is not offered on channel '{self.channel_id}'."})
 
@@ -632,6 +638,14 @@ class Feed(models.Model):
             from django.core.exceptions import ValidationError
             raise ValidationError(
                 {'profile': 'Platform artifacts are JSON; unset the profile for CSV feeds.'})
+        # Phase 4.3: publishing to a deactivated locale is refused. Admin
+        # surfaces this via full_clean; run_feed enforces it on the build
+        # path (the scheduler bypasses clean()).
+        if self.locale_id is not None and not self.locale.is_active:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                {'locale': f"Locale {self.locale_id!r} is inactive; "
+                           'deactivate the feed instead.'})
 
 
 class PlatformChoices(models.TextChoices):
