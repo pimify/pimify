@@ -75,3 +75,7 @@ STORAGES = {
     # Same env-gated alias as base (local dir unless DBBACKUP_S3_BUCKET set).
     "dbbackup": _dbbackup_storage(),
 }
+
+# WhiteNoise cache in prod: 60s. Browsers revalidate, so replaced images
+# appear — no staleness bugs.
+WHITENOISE_MAX_AGE = 60

@@ -1,18 +1,24 @@
-.env
+# VCS, environment, local tooling
 .git
 .gitignore
+.env
 .venv
 env
+
+# Local runtime data & artifacts — never belongs in an image
 data
 backups
 media
 static
-core/__pycache__
-core/compressor/__pycache__
-core/settings/__pycache__
-api/__pycache__
-api/management/commands/__pycache__
-api/migrations/__pycache__
-script/gunicorn/__pycache__
+feeds
+
+# Python bytecode — blanket rule (a per-path list always misses new apps)
+**/__pycache__/
+*.pyc
+
+# Personal local work log (untracked; keep it out of the image)
+TODO.md
+
+# Host-side installers, not needed in the OCI image
 script/start/install.sh
 script/start/install.bat

@@ -56,6 +56,7 @@ MIDDLEWARE = [
     "core.compressor.middleware.BrotliMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # For serving static files
+    "core.middleware.WhiteNoiseMediaMiddleware",  # Serves MEDIA_ROOT at MEDIA_URL (local storage only)
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -234,6 +235,10 @@ STORAGES = {
     # AWS_SECRET_ACCESS_KEY), so they are never written into settings.
     "dbbackup": _dbbackup_storage(),
 }
+
+# NOTE: WHITENOISE_MAX_AGE is set per environment (0 in development so edited
+# statics never serve stale, 60 in production). An unconditional 60 would have
+# broken the dev loop — WhiteNoise's own default is 0 under DEBUG.
 
 # STATICFILES_STORAGE = "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"
 
