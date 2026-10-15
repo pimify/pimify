@@ -37,6 +37,11 @@ jobs:
           python-version: "3.14"
 
       - run: uv sync --locked
+
+      # data/ is gitignored, so a fresh checkout has none — and SQLite
+      # needs the directory to exist before any command touches the DB.
+      - run: mkdir -p data backups media feeds
+
       - run: uv run python manage.py check
       - run: uv run python manage.py makemigrations --check --dry-run
       - run: uv run python manage.py test --noinput
