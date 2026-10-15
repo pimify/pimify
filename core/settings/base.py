@@ -2,7 +2,9 @@
 import re
 import warnings
 
-from decouple import config
+# Env source: per-environment file selected by MODE (.env.dev / .env.prod);
+# OS environ wins over the file. See core/settings/env.py.
+from .env import config
 from pathlib import Path
 from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _

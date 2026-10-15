@@ -1,0 +1,26 @@
+# Pimify scheduler (monthly backups + scheduled channel feeds). The command
+# stays in the foreground until SIGTERM/SIGINT and shuts APScheduler down
+# cleanly, so Restart=on-failure only fires on real crashes — never on a
+# clean shutdown or a deploy stop.
+[Unit]
+Description=Pimify scheduler (backups + channel feeds)
+After=network.target pimify-web.service
+Wants=pimify-web.service
+
+[Service]
+Type=simple
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+# Same MODE/.env.prod wiring as pimify-web.service.
+Environment=MODE=production
+EnvironmentFile=-__APP_DIR__/.env.prod
+ExecStart=__APP_DIR__/.venv/bin/python manage.py scheduler
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=__APP_DIR__/data __APP_DIR__/media __APP_DIR__/backups __APP_DIR__/feeds __APP_DIR__/static
+
+[Install]
+WantedBy=multi-user.target

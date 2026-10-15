@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 """Django's command-line utility for administrative tasks."""
-from decouple import config
 import os
 import sys
 
-# Get MODE from environment (defaults to development so `manage.py` works without .env)
-MODE = config("MODE", default="development")
+# MODE comes from the REAL OS environment only (never from an env file):
+# it selects which file core/settings/env.py reads. Defaults to development
+# so `manage.py` works on a fresh clone with zero setup.
+MODE = os.environ.get("MODE", "development")
 
 def main():
     """Run administrative tasks."""

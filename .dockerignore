@@ -1,7 +1,14 @@
 # VCS, environment, local tooling
 .git
 .gitignore
+# .env* (not .env): real per-env files are .env.dev / .env.prod and MUST
+# never bake into an image — a prod host that builds here would leak its
+# live SECRET_KEY into a layer. Negations re-include the examples only
+# (order matters: later lines win). .env kept for the legacy filename.
 .env
+.env*
+!.env.dev.example
+!.env.prod.example
 .venv
 env
 

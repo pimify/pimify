@@ -1,4 +1,7 @@
 # Import necessary modules
+import signal
+import threading
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from django_apscheduler.jobstores import DjangoJobStore
@@ -141,14 +144,38 @@ def start():
     scheduler = build_scheduler()
 
     try:
-        scheduler.start()  # Start the scheduler
+        scheduler.start()  # Start the scheduler (spawns a daemon thread)
         print("Scheduler started successfully.")
     except Exception as e:
         print(f"Failed to start scheduler: {e}")
+        return
+
+    return scheduler
 
 # Management command to run the scheduler
 class Command(BaseCommand):
     help = "Runs the background scheduler for periodic tasks"
 
     def handle(self, *args, **kwargs):
-        start()
+        scheduler = start()
+        if scheduler is None:
+            return
+
+        # BackgroundScheduler.start() spawns a daemon thread and returns
+        # immediately — without this wait the process would exit at once
+        # (killing the thread) and no job would ever run. The Event keeps
+        # the main thread alive until SIGTERM/SIGINT, then shuts the
+        # scheduler down cleanly so APScheduler persists job state.
+        stop = threading.Event()
+
+        def _stop(signum, frame):
+            if stop.is_set():  # second signal during shutdown — ignore it
+                return
+            self.stdout.write(f"Received signal {signum}; shutting down scheduler.")
+            stop.set()
+
+        signal.signal(signal.SIGTERM, _stop)
+        signal.signal(signal.SIGINT, _stop)
+
+        stop.wait()
+        scheduler.shutdown(wait=True)

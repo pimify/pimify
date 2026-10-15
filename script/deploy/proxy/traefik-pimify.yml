@@ -1,0 +1,39 @@
+# Pimify Traefik dynamic config (file provider). Installed by
+# script/deploy/install.sh — __DOMAIN_HOST__ is substituted at install time.
+# Load it via `--providers.file.filename=/path/to/traefik-pimify.yml`.
+#
+# What YOUR static Traefik config must already provide (this file assumes):
+#   - entrypoints "web" (:80) and "websecure" (:443)
+#   - a certificate resolver named "le" (e.g. Let's Encrypt tlsChallenge)
+# The X-Forwarded-* headers Traefik adds are what Django's
+# TRUST_PROXY_HEADERS (SECURE_PROXY_SSL_HEADER) reads — without them
+# request.is_secure() is False and secure-cookie login silently fails.
+# WhiteNoise serves /static/ and /media/ from Django, so plain routing is
+# the whole config.
+
+http:
+  routers:
+    pimify-secure:
+      rule: "Host(`__DOMAIN_HOST__`)"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: pimify
+    pimify-redirect:
+      rule: "Host(`__DOMAIN_HOST__`)"
+      entryPoints:
+        - web
+      middlewares:
+        - https-redirect
+      service: pimify
+  middlewares:
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+  services:
+    pimify:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8000"

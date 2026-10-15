@@ -1,4 +1,6 @@
-from decouple import config
+# Env source: .env.dev when present, bare defaults otherwise (fresh clones
+# work with zero setup). See core/settings/env.py.
+from .env import config
 from .base import *
 
 # Security setting

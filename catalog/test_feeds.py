@@ -384,6 +384,41 @@ class FeedScheduleTest(TempFeedsMixin, TestCase):
         build_scheduled_feed(424242)  # gone feed id: prints, no raise/run
         self.assertEqual(FeedRun.objects.count(), 0)
 
+    def test_scheduler_command_blocks_then_shuts_down(self):
+        # Regression: handle() used to return right after start(), so the
+        # process exited at once (daemon thread died with it) and no job
+        # ever ran. It must now wait, install both signal handlers, and
+        # shut the scheduler down cleanly. The live proof (process survives
+        # `timeout`) can't run in-suite, so pin the wiring with mocks.
+        import signal
+        from unittest import mock
+
+        from api.management.commands import scheduler as sched_mod
+        from api.management.commands.scheduler import Command
+
+        fake_scheduler = mock.Mock()
+        with mock.patch.object(sched_mod, 'start',
+                               return_value=fake_scheduler), \
+             mock.patch.object(sched_mod.signal, 'signal') as m_signal, \
+             mock.patch.object(sched_mod.threading, 'Event') as m_event:
+            event = m_event.return_value
+            Command().handle()
+        event.wait.assert_called_once_with()  # blocked, didn't return early
+        fake_scheduler.shutdown.assert_called_once_with(wait=True)
+        installed = sorted(call.args[0] for call in m_signal.call_args_list)
+        self.assertEqual(installed, [signal.SIGINT, signal.SIGTERM])
+
+    def test_scheduler_command_exits_when_start_fails(self):
+        from unittest import mock
+
+        from api.management.commands import scheduler as sched_mod
+        from api.management.commands.scheduler import Command
+
+        with mock.patch.object(sched_mod, 'start', return_value=None), \
+             mock.patch.object(sched_mod.threading, 'Event') as m_event:
+            Command().handle()  # must return, not blow up on None
+        m_event.assert_not_called()
+
     def test_build_scheduled_feed_runs_live_feed(self):
         from api.management.commands.scheduler import build_scheduled_feed
         feed = Feed.objects.create(name='cron', channel=self.channel,

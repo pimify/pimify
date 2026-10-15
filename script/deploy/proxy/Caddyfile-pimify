@@ -1,0 +1,14 @@
+# Pimify Caddy site. Installed by script/deploy/install.sh —
+# __DOMAIN_HOST__ is substituted at install time.
+#
+# Caddy fetches and renews TLS certificates by itself (automatic HTTPS) —
+# the only one of the three supported proxies that does. Nothing else to
+# configure for TLS. Caddy sets X-Forwarded-For/Proto on its own, which is
+# what Django's TRUST_PROXY_HEADERS (SECURE_PROXY_SSL_HEADER) reads;
+# without it request.is_secure() is False and secure-cookie login fails.
+# WhiteNoise serves /static/ and /media/ from Django, so a plain
+# reverse_proxy is the whole config.
+
+__DOMAIN_HOST__ {
+	reverse_proxy 127.0.0.1:8000
+}

@@ -4,7 +4,7 @@ python-decouple does NOT strip inline comments: a line like
 `MEDIA_S3_ENDPOINT_URL=  # set for MinIO` yields the literal
 '# set for MinIO', which used to become a live endpoint URL (silent
 corruption) or crash settings import for booleans. _env_str/_env_bool
-neutralize that shape; .env.example keeps notes on their own lines.
+neutralize that shape; .env.dev.example / .env.prod.example keep notes on their own lines.
 """
 import os
 from contextlib import contextmanager

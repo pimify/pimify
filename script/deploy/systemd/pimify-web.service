@@ -1,0 +1,26 @@
+# Pimify web service (gunicorn). Installed by script/deploy/install.sh —
+# __APP_DIR__ / __APP_USER__ are substituted at install time.
+[Unit]
+Description=Pimify web (gunicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+# MODE=production selects core.settings.production AND .env.prod
+# (see core/settings/env.py). EnvironmentFile supplies the secrets;
+# the explicit Environment wins if both define the same key.
+Environment=MODE=production
+EnvironmentFile=-__APP_DIR__/.env.prod
+ExecStart=__APP_DIR__/.venv/bin/gunicorn core.wsgi:application -c __APP_DIR__/script/gunicorn/gunicorn.conf.py
+Restart=on-failure
+RestartSec=5
+# Hardening: data dirs stay writable, everything else read-only.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=__APP_DIR__/data __APP_DIR__/media __APP_DIR__/backups __APP_DIR__/feeds __APP_DIR__/static
+
+[Install]
+WantedBy=multi-user.target

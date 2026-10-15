@@ -1,7 +1,10 @@
 env
 .venv
 .env
-!.env.example
+.env.dev
+.env.prod
+!.env.dev.example
+!.env.prod.example
 # Bytecode everywhere (per-path entries missed new apps twice already).
 **/__pycache__/
 data
@@ -10,3 +13,7 @@ feeds
 media
 static
 TODO.md
+.deploy-out/
+
+# uv/pyproject is the only dependency source — keep stale pip files out.
+requirements.txt
