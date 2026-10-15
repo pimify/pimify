@@ -24,7 +24,9 @@ jobs:
 
       # Pinned to the same uv as Dockerfile so `uv sync --locked` can't
       # fail on lockfile-format drift between CI and the image build.
-      - uses: astral-sh/setup-uv@v10
+      # SHA pin (not @v10): setup-uv publishes no floating major past v5;
+      # @v10 does not resolve. SHA verified via gh api against v10.3.0.
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.9.16"
           enable-cache: true
