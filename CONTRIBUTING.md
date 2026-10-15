@@ -24,11 +24,22 @@ To start contributing, follow these steps:
 
 - Fork this repository to your GitHub account
 - Clone the forked repository to your local machine
-- Create your Feature or Fix Branch (`git checkout -b feature/AmazingFeature`)
+- Create your Feature or Fix Branch (`git checkout -b feature/your-change`)
 - Make your changes and ensure they are properly tested
-- Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-- Push to the Branch (`git push origin feature/AmazingFeature`)
+- Commit your Changes (`git commit -m 'Describe your change'`)
+- Push to the Branch (`git push origin feature/your-change`)
 - Open a Pull Request
 
+## Run the checks
+
+CI (`.github/workflows/ci.yml`) runs these four commands on every push and PR to `dev`/`main`. Run them locally before pushing — a red pipeline is almost always one of these:
+
+```bash
+uv sync --locked
+uv run python manage.py check
+uv run python manage.py makemigrations --check --dry-run
+uv run python manage.py test --noinput
+```
+
 ## License
-By contributing to podman-init, you agree that your contributions will be licensed under the MIT License.
+By contributing to pimify, you agree that your contributions will be licensed under the Apache License 2.0 (see `LICENSE`).

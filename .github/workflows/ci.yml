@@ -1,0 +1,40 @@
+# Pimify CI: the same four-command gate used locally (see CONTRIBUTING.md).
+# Tests are hermetic (no env vars, no network, SQLite/WAL), so no services.
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pinned to the same uv as Dockerfile so `uv sync --locked` can't
+      # fail on lockfile-format drift between CI and the image build.
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.9.16"
+          enable-cache: true
+
+      # Single version, not a matrix: requires-python = ">=3.14".
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - run: uv sync --locked
+      - run: uv run python manage.py check
+      - run: uv run python manage.py makemigrations --check --dry-run
+      - run: uv run python manage.py test --noinput

@@ -1,0 +1,9 @@
+# Keeps the CI action pins in ci.yml from drifting (which is how they went
+# 3-5 majors stale once already). uv itself stays pinned in the workflow
+# to match Dockerfile — Dependabot does not touch that.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
