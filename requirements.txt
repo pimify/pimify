@@ -2,7 +2,7 @@ annotated-types==0.7.0
 APScheduler==3.11.0
 asgiref==3.8.1
 babel==2.16.0
-Brotli==1.2.0
+Brotli==1.2.1
 certifi==2024.8.30
 diff-match-patch==20241021
 dj-user-login-history==1.0.6
