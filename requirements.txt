@@ -14,7 +14,7 @@ django-import-export==4.2.0
 django-money==3.5.3
 django-ninja==1.3.0
 django-unfold==0.40.0
-dnspython==2.7.0
+dnspython==2.9.0
 fastnanoid==0.4.1
 gunicorn==23.0.0
 idna==3.15
